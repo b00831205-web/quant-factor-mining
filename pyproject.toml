@@ -1,0 +1,33 @@
+[project]
+name = "quant-factor-mining"
+version = "0.1.0"
+description = "S&P 500 factor mining pipeline with honest statistics: Newey-West IC tests, multiple-testing control, point-in-time universe, turnover-based costs, Carhart attribution"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "akshare>=1.18.64",
+    "apache-airflow>=3.2.2",
+    "babel>=2.18.0",
+    "backtrader>=1.9.78.123",
+    "beautifulsoup4>=4.14.3",
+    "curl-cffi>=0.15.0",
+    "lightgbm>=4.6.0",
+    "numpy>=2.4.6",
+    "pandas>=3.0.3",
+    "pandas-datareader>=0.11.1",
+    "plotly>=6.8.0",
+    "pyarrow>=24.0.0",
+    "scikit-learn>=1.9.0",
+    "scipy>=1.17.1",
+    "statsmodels>=0.14.6",
+    "vectorbt>=0.28.2",
+    "visualization>=1.0.0",
+    "xgboost>=3.2.0",
+    "yfinance>=1.4.1",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.2.0",
+    "jupyter>=1.1.1",
+]

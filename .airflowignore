@@ -1,0 +1,6 @@
+.venv
+.venv-win
+tmp
+notebooks
+__pycache__
+airflow

@@ -1,0 +1,35 @@
+# --- market data & run artifacts (never committed: size + data licensing) ---
+data/
+tmp/
+analysis/
+output.txt
+run.log
+*.parquet
+*.pkl
+*.xlsx
+
+# --- airflow runtime (airflow.cfg contains secret keys; db/logs are local state) ---
+airflow/
+*.db
+*.db-shm
+*.db-wal
+
+# --- python ---
+__pycache__/
+*.pyc
+.venv/
+.venv-win/
+.ipynb_checkpoints/
+
+# --- local scratch / superseded scripts ---
+test.py
+test_dhp_bug.py
+check_align.py
+ff3.py
+
+# --- generated dashboards (frontend being rebuilt) ---
+factor_analysis_dashboard.html
+
+# --- editor/os noise ---
+.DS_Store
+Thumbs.db

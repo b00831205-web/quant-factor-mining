@@ -1,0 +1,18 @@
+# Minimal Airflow settings for this project.
+# Copy the relevant keys into your own $AIRFLOW_HOME/airflow.cfg.
+# NEVER commit the real airflow.cfg: it contains fernet_key / secret_key.
+
+[core]
+# Point Airflow at this repo so it picks up DAG_pipeline.py
+dags_folder = /path/to/quant-factor-mining
+
+# Generate your own key:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+fernet_key = REPLACE_ME
+
+[database]
+sql_alchemy_conn = sqlite:////path/to/airflow/airflow.db
+
+[api]
+# Generate your own random secret, e.g.:  openssl rand -base64 16
+secret_key = REPLACE_ME
