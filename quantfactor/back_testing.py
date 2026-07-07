@@ -1,6 +1,6 @@
 import pandas as pd
 import os
-from IC_calculator import different_holding_period, train_test_analysis, CS_Information_Correlation, get_constitunents_at_date
+from quantfactor.ic_calculator import different_holding_period, train_test_analysis, CS_Information_Correlation, get_constitunents_at_date
 import numpy as np
 from scipy.stats import spearmanr
 import pickle

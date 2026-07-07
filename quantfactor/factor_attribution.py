@@ -13,7 +13,7 @@ Library and place under ``tmp/ff3/``):
 import pandas as pd
 import statsmodels.api as sm
 
-from back_testing import expand_to_daily_returns
+from quantfactor.back_testing import expand_to_daily_returns
 
 
 def load_french_factors(ff3_path: str, mom_path: str) -> pd.DataFrame:

@@ -3,8 +3,8 @@
 Configuration comes from environment variables so the DAG file itself is
 portable across machines:
 
-    QUANT_PROJECT_ROOT  Absolute path of this project. Defaults to the
-                        directory containing this file.
+    QUANT_PROJECT_ROOT  Absolute path of this project. Defaults to the parent
+                        of the directory containing this file (repo root).
     QUANT_PYTHON_BIN    Python interpreter used to run the task scripts.
                         Defaults to ``python``. On a WSL-hosted Airflow that
                         drives a Windows venv, point it at
@@ -19,7 +19,7 @@ from airflow.utils.trigger_rule import TriggerRule
 from airflow.sdk import DAG
 
 PROJECT_ROOT = os.environ.get("QUANT_PROJECT_ROOT",
-                              os.path.dirname(os.path.abspath(__file__)))
+                              os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PYTHON_BIN = os.environ.get("QUANT_PYTHON_BIN", "python")
 
 
@@ -27,12 +27,16 @@ def task_command(script: str) -> str:
     """Build the bash command that runs one pipeline script.
 
     Args:
-        script: Script filename relative to the project root.
+        script: Script filename inside the ``pipelines/`` directory.
 
     Returns:
         A bash command string with the Airflow ``ds``/``run_id`` templates.
+
+    Notes:
+        The command runs from the repo root so that relative data paths
+        (``tmp/``, ``data/``) resolve correctly.
     """
-    return (f'cd "{PROJECT_ROOT}" && "{PYTHON_BIN}" {script} '
+    return (f'cd "{PROJECT_ROOT}" && "{PYTHON_BIN}" pipelines/{script} '
             '--date {{ ds }} --batch {{ run_id }}')
 
 

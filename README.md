@@ -58,21 +58,29 @@ point.
 
 ```
 yfinance (batch download, retry, blacklist, checkpoints)
-        │  data_acquisition.py / task_1.py
+        │  quantfactor/data_acquisition.py · pipelines/task_1.py
         ▼
-cleaning & merge (ffill, dedup)          Airflow DAG: DAG_pipeline.py
-        │  task_2.py
+cleaning & merge (ffill, dedup)          Airflow DAG: pipelines/DAG_pipeline.py
+        │  pipelines/task_2.py
         ▼
 factor computation (8 candidates, vectorized pandas)
-        │  factor_mining.py / task_3.py
+        │  quantfactor/factor_mining.py · pipelines/task_3.py
         ▼
 IC testing: cross-sectional & time-series IC, NW t, BH/Bonferroni,
-train/test split, orthogonalization        IC_calculator.py
+train/test split, orthogonalization        quantfactor/ic_calculator.py
         ▼
 quintile backtest: PIT universe, monotonicity, turnover costs,
-displacement/shuffle sanity tests          back_testing.py
+displacement/shuffle sanity tests          quantfactor/back_testing.py
         ▼
-Carhart 4-factor attribution (daily, HAC)  factor_attribution.py
+Carhart 4-factor attribution (daily, HAC)  quantfactor/factor_attribution.py
+```
+
+Repository layout:
+
+```
+quantfactor/   research library (importable package)
+pipelines/     Airflow DAG + daily CLI tasks
+tests/         test suite (being built out, see roadmap)
 ```
 
 ## Setup
@@ -88,13 +96,15 @@ redistribution). To reproduce:
 
 1. Historical S&P 500 membership: provide a CSV with `ticker`, `start_date`,
    `end_date` columns and point `SP500_MEMBERSHIP_CSV` at it.
-2. Prices/volumes: `python task_1.py --date <ds> --batch manual` downloads in
-   batches with checkpointing, then `task_2.py` cleans and merges.
+2. Prices/volumes: `python pipelines/task_1.py --date <ds> --batch manual`
+   downloads in batches with checkpointing, then `pipelines/task_2.py` cleans
+   and merges.
 3. Fama-French factors: download the daily FF3 and momentum CSVs from the
    [Ken French Data Library](https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html)
    into `tmp/ff3/`.
-4. Run the research chain: `task_3.py` → `IC_calculator.py` →
-   `back_testing.py` → `factor_attribution.py`.
+4. Run the research chain from the repo root:
+   `python pipelines/task_3.py ...` → `python -m quantfactor.ic_calculator` →
+   `python -m quantfactor.back_testing` → `python -m quantfactor.factor_attribution`.
 
 For the Airflow DAG, set `QUANT_PROJECT_ROOT` and `QUANT_PYTHON_BIN` (see
 `DAG_pipeline.py` docstring) and copy `airflow.cfg.example` keys into your own

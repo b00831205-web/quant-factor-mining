@@ -22,10 +22,7 @@ __pycache__/
 .ipynb_checkpoints/
 
 # --- local scratch / superseded scripts ---
-test.py
-test_dhp_bug.py
-check_align.py
-ff3.py
+scripts/
 
 # --- generated dashboards (frontend being rebuilt) ---
 factor_analysis_dashboard.html

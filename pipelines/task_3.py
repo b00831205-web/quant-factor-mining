@@ -1,4 +1,8 @@
-import factor_mining
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  #以脚本方式执行时定位repo根目录
+
+from quantfactor import factor_mining
 import pandas as pd
 import os
 import argparse
