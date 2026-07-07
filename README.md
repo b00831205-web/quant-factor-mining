@@ -15,14 +15,17 @@ that survives the full testing gauntlet:
 | Stage | Result |
 |---|---|
 | Train IC (2015–2023, Newey-West) | t = 3.78 (20d holding), passes Bonferroni & Benjamini-Hochberg across all 18 factor × horizon tests |
-| Out-of-sample quintiles (2024–2026) | Monotonic (Spearman 0.9); long-short gross ~16 %/yr, Sharpe ~1.6 |
-| Carhart 4-factor attribution (daily, HAC) | Market beta 0.24 (significant), large-cap tilt; momentum & value loadings insignificant |
-| Net alpha | ~7–10 %/yr point estimate, **not statistically confirmable** on 2.4 years of out-of-sample data (p ≈ 0.26) |
+| Out-of-sample quintiles (2024–2026) | Monotonic (Spearman 0.9); long-short gross ~14 %/yr (Sharpe ~1.5), ~1.4 Sharpe net of turnover-based costs |
+| Carhart 4-factor attribution (daily, HAC, net of costs) | Market beta 0.24 (significant), large-cap tilt (SMB −0.13); momentum & value loadings insignificant |
+| Net alpha | ~10 %/yr net of costs (t = 1.78, p ≈ 0.07, n = 603 daily obs) — economically meaningful, **marginally short of the 5 % significance bar** on 2.4 years of out-of-sample data |
 
 The honest conclusion: the factor's IC is robustly significant in-sample under
-conservative testing; its out-of-sample alpha is economically meaningful but
-statistically unproven. Live verification over a longer window is required —
-and that is exactly what a research report should say.
+conservative testing; its out-of-sample net alpha is economically meaningful
+but does not clear conventional significance. Live verification over a longer
+window is required — and that is exactly what a research report should say.
+(A low-power period-level regression, n ≈ 30, says nothing either way —
+p ≈ 0.38 with a confidence interval wide enough to hold any conclusion. Test
+power and test bookkeeping move the verdict as much as the signal does.)
 
 The remaining seven candidate factors (momentum, short-term reversal,
 volatility, downside volatility, volume-price correlation, …) fail the
