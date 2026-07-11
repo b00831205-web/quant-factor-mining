@@ -31,7 +31,7 @@ Modules:
                         (see config.example.yaml).
 """
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 from .datareader import (
     MarketData,

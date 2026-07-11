@@ -1,6 +1,6 @@
 [project]
 name = "quantmine"
-version = "0.2.0"
+version = "0.2.1"
 description = "Equity factor research library with honest statistics: Newey-West IC tests, multiple-testing control, point-in-time universe, turnover-based costs, Carhart attribution"
 readme = "README.md"
 requires-python = ">=3.13"
