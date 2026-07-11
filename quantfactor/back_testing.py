@@ -1,9 +1,7 @@
 import pandas as pd
-import os
-from quantfactor.ic_calculator import different_holding_period, train_test_analysis, CS_Information_Correlation, get_constitunents_at_date
+from .datareader import ConstituentsSource, MembershipTableSource
 import numpy as np
 from scipy.stats import spearmanr
-import pickle
 
 
 def truncate_quantile(cross_section_series: list|pd.Series, part:int =5):
@@ -33,69 +31,70 @@ def truncate_quantile(cross_section_series: list|pd.Series, part:int =5):
     return list(batch)
         
 
-def quantile_backtest(historical_df: pd.DataFrame ,factor_ticker: pd.DataFrame,significant_factor_list:list,different_holding_period: pd.DataFrame, period: int, part:int =5):
+def quantile_backtest(constituents: ConstituentsSource | pd.DataFrame | None ,factors: dict[str, pd.DataFrame], significant_factor_list:list, forward_returns: dict[int,pd.DataFrame], part:int =5):
     """Run a quantile long-short backtest for each selected factor.
 
     Args:
-        historical_df: A dataframe describing ticker membership over time.
-            It is used to filter tickers to the ones valid on each date.
-        factor_ticker: Factor values indexed by date, with ticker-specific
-            columns such as ``factorName_TICKER``.
+        constituents: Point-in-time universe source implementing
+            ``get_constituents(date) -> set[str]``. A raw membership dataframe
+            (ticker/start_date/end_date columns) is auto-wrapped in
+            ``MembershipTableSource``. Pass ``None`` to use every factor
+            column (survivorship-biased fixed universe).
+        factors: Mapping of factor name to a date-by-ticker value dataframe.
         significant_factor_list: Factor names to evaluate.
-        different_holding_period: Forward holding-period returns with columns
-            named like ``{period}DaysHoldingPeriod_TICKER``.
-        period: Holding period in trading days used to match the return table.
+        forward_returns: Mapping of holding period (in trading days) to a
+            date-by-ticker forward return dataframe.
         part: Number of quantile groups to form. Default is 5.
 
     Returns:
-        A dictionary mapping each factor name to a dataframe with quantile
-        returns (Q1..Qn) and a ``long_short`` column.
-
-    Notes:
-        The function expects the factor dataframe and return dataframe to use
-        compatible date indices and ticker suffix conventions.
+        A tuple ``(all_result, all_ticker_history)``. Both are keyed by
+        ``(factor_name, period)``; results hold Q1..Qn plus ``long_short``
+        returns per rebalance date, histories hold the member set per group.
     """
+    if isinstance(constituents, pd.DataFrame):
+        constituents = MembershipTableSource(constituents)
+
     all_result={}
     all_ticker_history = {}
-    
+
     for significant_factor in significant_factor_list:
-        factor = [f for f in factor_ticker.columns if f.rsplit('_',1)[0] == significant_factor]
-        factor_df = factor_ticker[factor]
-        holding_period = [d for d in different_holding_period.columns if d.rsplit('_',1)[0]== f'{period}DaysHoldingPeriod']
-        different_holding_period_df = different_holding_period[holding_period]
-        result=[]
-        ticker_history = []
-        for index in range(0, len(factor_ticker.index), period):
-            curr_date = factor_df.index[index]
-            if curr_date not in different_holding_period_df.index:
-                continue
-            valid_tickers = get_constitunents_at_date(historical_df=historical_df, date= curr_date)
+        factor_df = factors[significant_factor]
+        for period, forward_return_df in forward_returns.items():
+            result=[]
+            ticker_history = []
+            for index in range(0, len(factor_df), period):
+                curr_date = factor_df.index[index]
+                if curr_date not in forward_return_df.index:
+                    continue
+                if constituents is None:
+                    available_tickers = list(factor_df.columns)
+                else:
+                    valid_tickers = constituents.get_constituents(curr_date)
+                    #按factor列序取交集: valid_tickers是set, 直接遍历顺序不确定,
+                    #并列排名经稳定排序后分位边界成员会随运行漂移, 结果不可复现
+                    available_tickers = [t for t in factor_df.columns if t in valid_tickers]
 
-            if factor_df.iloc[index].isnull().all():
-                continue
-            cross_section_factor = factor_df.iloc[index]
-            cross_section_factor = cross_section_factor[cross_section_factor.index.map(lambda x: x.rsplit('_',1)[1] in valid_tickers)]
-            ranked_cross_section = cross_section_factor.rank(ascending=True)
-            ranked_cross_section = ranked_cross_section.sort_values()
-            tickers = ranked_cross_section.index.map(lambda x: x.rsplit('_',1)[1])
+                if factor_df.iloc[index].isnull().all():
+                    continue
+                cross_section_factor = factor_df.loc[curr_date, available_tickers]
+                ranked_cross_section = cross_section_factor.rank(ascending=True)
+                ranked_cross_section = ranked_cross_section.sort_values()
+                tickers = ranked_cross_section.index
 
-            ranked_list = truncate_quantile(tickers ,part = part)
-            group_list =[]
-            for group in ranked_list:
-                group_list.append([f"{period}DaysHoldingPeriod_{t}" for t in group])
-            
-            _return = {'date':curr_date}    
-            _tickers = {'date':curr_date}
-            for i in range(part):
-                group_return = different_holding_period_df.loc[curr_date, group_list[i]]
-                _return[f'Q{i+1}'] = group_return.mean()
-                _tickers[f'Q{i+1}'] = set(t.rsplit('_',1)[1] for t in group_list[i])
-            ticker_history.append(_tickers)
-            result.append(_return)
-        result_df = pd.DataFrame(result).set_index('date')
-        result_df['long_short'] = result_df['Q5']-result_df['Q1']
-        all_ticker_history[significant_factor] = ticker_history
-        all_result[significant_factor] = result_df
+                group_list = truncate_quantile(tickers ,part = part)
+                
+                _return = {'date':curr_date}    
+                _tickers = {'date':curr_date}
+                for i in range(part):
+                    group_return = forward_return_df.loc[curr_date, group_list[i]]
+                    _return[f'Q{i+1}'] = group_return.mean()
+                    _tickers[f'Q{i+1}'] = set(group_list[i])
+                ticker_history.append(_tickers)
+                result.append(_return)
+            result_df = pd.DataFrame(result).set_index('date')
+            result_df['long_short'] = result_df['Q5']-result_df['Q1']
+            all_ticker_history[(significant_factor,period)] = ticker_history
+            all_result[(significant_factor,period)] = result_df
     return all_result ,all_ticker_history
 
 def expand_to_daily_returns(tickers_history:list, close_data: pd.DataFrame, cost_per_trade: float = 0.001):
@@ -156,6 +155,24 @@ def expand_to_daily_returns(tickers_history:list, close_data: pd.DataFrame, cost
     daily_wide['long_short'] = daily_wide['Q5'] - daily_wide['Q1']
     return daily_wide
 
+def expand_all_to_daily_returns(
+    all_ticker_history: dict,
+    close_data: pd.DataFrame,
+    cost_per_trade: float = 0.001,
+) -> dict:
+    """
+    对 quantile_backtest 产出的 all_ticker_history（key是(factor, period)元组），
+    批量展开成逐日收益，不需要手动一个个取。
+
+    Returns:
+        dict[(factor, period), pd.DataFrame] —— 和输入结构对应，
+        每个key对应一份展开后的逐日Q1-Q5+long_short收益表
+    """
+    all_daily_returns = {}
+    for key, ticker_history in all_ticker_history.items():
+        all_daily_returns[key] = expand_to_daily_returns(ticker_history, close_data, cost_per_trade)
+    return all_daily_returns
+
 def calculate_turnover(ticker_history: list, group: str)->pd.Series:
     """Compute per-rebalance membership turnover for one quantile group.
 
@@ -181,7 +198,7 @@ def calculate_turnover(ticker_history: list, group: str)->pd.Series:
     return pd.Series(turnovers)
 
 
-def back_test_senity_test(significant_factor_list:list, factor_ticker: pd.DataFrame ,diff_holding_period: pd.DataFrame, close:pd.DataFrame, periods:list,
+def back_test_senity_test(constituents: ConstituentsSource | pd.DataFrame | None ,significant_factor_list:list, factors: dict[str,pd.DataFrame] ,forward_returns: dict[int,pd.DataFrame], close:pd.DataFrame, periods:list,
                           origincal_back_test: dict):
     """Run sensitivity tests against factor displacement and shuffled factors.
 
@@ -202,43 +219,46 @@ def back_test_senity_test(significant_factor_list:list, factor_ticker: pd.DataFr
         shifting factor values by one period and randomly shuffling factor rows.
     """
     tickers = list(close.columns)
-    factor_ticker_shifting = factor_ticker.shift(-1)
-    shuffle_data = factor_ticker.copy()
-    for idx in shuffle_data.index:
-        shuffle_data.loc[idx] = np.random.permutation(shuffle_data.loc[idx].values)
+    factors_shifting = {}
+    for factor_name, factor in factors.items():
+        factors_shifting[factor_name] = factor.shift(-1)
+    #shuffle基于原始因子, 且必须逐frame深拷贝:
+    #dict.copy()是浅拷贝, in-place打乱会把factors_shifting的frame一起改掉
+    shuffle_data = {factor_name: factor.copy() for factor_name, factor in factors.items()}
+    for factor_name, factor in shuffle_data.items():
+        for idx in factor.index:
+            factor.loc[idx] = np.random.permutation(factor.loc[idx].values)
+    
 
-    factor_displacement_result = {}
+
     period_difference = {}
-    shuffle_data_return = {}
 
     
     for period in periods:
         #holding period return and close data shifting difference
         
-        raw_return = pd.DataFrame({f'{period}DaysHoldingPeriod_{ticker}' : close[ticker].pct_change(period).shift(-period) for ticker in tickers})
-        common_col = diff_holding_period.columns.intersection(raw_return.columns)
-        diff = (diff_holding_period[common_col]-raw_return[common_col]).abs().sum().sum() #第一个sum得到series，第二个sum把所有series相加得到标量
-        period_difference[f'{period}_holding_return'] = diff
+        raw_return = pd.DataFrame({ticker : close[ticker].pct_change(period).shift(-period) for ticker in tickers})
+        common_col = forward_returns[period].columns.intersection(raw_return.columns)
+        diff = (forward_returns[period][common_col]-raw_return[common_col]).abs().sum().sum() #第一个sum得到series，第二个sum把所有series相加得到标量
+        period_difference[period] = diff
 
-        #factor displacement
-        factor_displacement_result[f'{period}DaysHoldingPeriod'] = quantile_backtest(factor_ticker_shifting, significant_factor_list, diff_holding_period, period)
+    #factor displacement
+    factor_displacement_result , _ = quantile_backtest(constituents, factors_shifting,significant_factor_list, forward_returns)
 
-        #shuffle data
-        shuffle_data_return[f'{period}DaysHoldingPeriod'] = quantile_backtest(shuffle_data, significant_factor_list, diff_holding_period, period)
+    #shuffle data
+    shuffle_data_return, _ = quantile_backtest(constituents,shuffle_data, significant_factor_list, forward_returns)
 
     total_difference = 0
     for period, diff in period_difference.items():
         total_difference += diff
     
     displace_difference = {}
-    for period, factor_result in factor_displacement_result.items():
-        for factor_name, df in factor_result.items():
-            displace_difference[f'{period}_{factor_name}'] = df - origincal_back_test[period][factor_name]
+    for (factor_name, period), df in factor_displacement_result.items():
+        displace_difference[(factor_name,period)] = df - origincal_back_test[(factor_name, period)]
     
     shuffle_difference = {}
-    for period, factor_result in shuffle_data_return.items():
-        for factor_name, df in factor_result.items():
-            shuffle_difference[f'{period}_{factor_name}'] = df - origincal_back_test[period][factor_name]
+    for (factor_name, period), df in shuffle_data_return.items():
+        shuffle_difference[(factor_name,period)] = df - origincal_back_test[(factor_name, period)]
     
     for key, diff in displace_difference.items():
         long_short_diff = diff['Q5'] - diff['Q1']
@@ -359,80 +379,3 @@ def apply_transcation_cost(result_df: pd.DataFrame, ticker_history: list,cost_pe
             cost = turnover.values * 2 * cost_per_trade
             result_after_cost[col] = result_df[col].values - cost
     return result_after_cost
-
-if __name__ == "__main__":
-        
-    pd.set_option('display.max_rows', None)
-    pd.set_option('display.max_columns', None)
-    pd.set_option('display.width', None)
-    
-    close_data=pd.read_parquet("data/processed/processed_close.parquet")
-    factor_data=pd.read_parquet("tmp/factors/factors.parquet")
-    #历史成分股表不在repo内(数据许可), 用环境变量覆盖默认相对路径
-    historical_df = pd.read_csv(os.environ.get('SP500_MEMBERSHIP_CSV', '../sp500/sp500_ticker_start_end.csv'))
-    
-    back_test_path = os.path.join(os.getcwd(), 'tmp/back_test')
-    os.makedirs(back_test_path, exist_ok=True)
-    
-    ticker_list=close_data.columns
-    periods=[1,5,20]
-    #原始因子算IC，用于正交化
-    different_holding_period_df , _  = different_holding_period(close=close_data, tickers = close_data.columns.tolist(), periods=periods)
-    # #原始因子算IC，用于正交化
-    cs_df = CS_Information_Correlation(factors=factor_data, different_holding_period=different_holding_period_df, output_path="tmp/ic_test/cs_df.parquet")
-
-    train_end = "2023-12-31" 
-    test_start = '2024-01-01'
-    train_test_analysis_result = train_test_analysis(cs_df= cs_df, factor_ticker=factor_data ,close = close_data, train_end=train_end, test_start= test_start)
-
-    significant_factors = train_test_analysis_result['significant_factors']
-    orth_factors_test = train_test_analysis_result['orthogonalize_result_full']
-    orth_factors_test = orth_factors_test[orth_factors_test.index >= f'{test_start}']
-    dhp_test = train_test_analysis_result['different_holding_period_test']
-
-    with pd.ExcelWriter('tmp/ic_test/stationary.xlsx') as w:
-        train_test_analysis_result['rolling_ic_train'].to_excel(w, sheet_name="rolling_ic")
-        train_test_analysis_result['acf_train'].to_excel(w,sheet_name="acf")
-        train_test_analysis_result['yearly_train'].to_excel(w, sheet_name = "yearly")
-    
-    test_result = {}
-    test_ticker_history = {}
-    for period in periods:
-        result, history = quantile_backtest(historical_df ,orth_factors_test, significant_factors, dhp_test, period)
-        test_result[f'{period}DaysHoldingPeriod'] = result
-        test_ticker_history[f'{period}DaysHoldingPeriod'] = history
-    
-    with open(os.path.join(back_test_path,'test_ticker_history.pkl'), 'wb') as f:
-       pickle.dump(test_ticker_history, f)
-
-    # daily_wide = expand_to_daily_returns(test_ticker_history, close_data)
-    # daily_wide.to_parquet(os.path.join(back_test_path, 'daily_wide.parquet'))
-
-
-    # with open(os.path.join(back_test_path,'test_result.pkl'), 'wb') as f:
-    #     pickle.dump(test_result, f)
-    
-    # for period_key, factor_result in test_result.items():
-    #     period_num = int(period_key.replace('DaysHoldingPeriod', ''))
-    #     for factor_name, df in factor_result.items():
-    #         print(f'---{factor_name}{period_key} TEST indicator---')
-    #         mono = monotonicity_test(df)
-    #         mono_df = pd.DataFrame([mono])
-    #         mono_df.to_parquet(os.path.join(back_test_path, f'{period_key}_{factor_name}_mono.parquet'))
-    #         print('Monotonicity:', mono)
-
-    #         summary_before_df, nav = performance_summary(df, period_num)
-    #         summary_before_df.to_parquet(os.path.join(back_test_path, f'{period_key}_{factor_name}_summary_before_cost.parquet'))
-    #         print("Before transaction cost:", summary_before_df)
-
-    #         ticker_history = test_ticker_history[period_key][factor_name]
-    #         df_after_cost = apply_transcation_cost(df, ticker_history)  
-    #         summary_after_df, _ = performance_summary(df_after_cost, period_num)
-    #         summary_after_df.to_parquet(os.path.join(back_test_path, f'{period_key}_{factor_name}_summary_after_cost.parquet'))
-    #         print('After transaction cost:', summary_after_df)
-        
-
-
-
-
-    

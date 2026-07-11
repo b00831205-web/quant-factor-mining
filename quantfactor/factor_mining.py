@@ -1,7 +1,8 @@
 import pandas as pd
+from .factor_register import factor_register
 
-
-def daily_return(df:pd.DataFrame, tickers:list)->pd.DataFrame:
+@factor_register('daily_return')
+def daily_return(close:pd.DataFrame, tickers:list)->pd.DataFrame:
     """Compute daily percentage returns for a list of tickers.
 
     Args:
@@ -15,9 +16,11 @@ def daily_return(df:pd.DataFrame, tickers:list)->pd.DataFrame:
         The first row for each ticker will be ``NaN`` because percentage change
         requires a previous observation.
     """
-    cols = [t for t in tickers if t in df.columns]
-    return df[cols].pct_change()
+    cols = [t for t in tickers if t in close.columns]
+    daily_return_df = close[cols].pct_change()
+    return daily_return_df
 
+@factor_register("excess_return")
 def excess_return(daily_return: pd.DataFrame) -> pd.DataFrame:
     """Compute excess returns over the market proxy SPY.
 
@@ -35,7 +38,8 @@ def excess_return(daily_return: pd.DataFrame) -> pd.DataFrame:
     excess_return=daily_return.drop(columns=['SPY']).sub(market_return, axis=0)
     return excess_return
 
-def momentum(df: pd.DataFrame, tickers: list, day:int =2) -> pd.DataFrame:
+@factor_register('momentum')
+def momentum(close: pd.DataFrame, tickers: list, day:int =2) -> pd.DataFrame:
     """Compute a simple momentum factor for each ticker.
 
     Args:
@@ -50,31 +54,31 @@ def momentum(df: pd.DataFrame, tickers: list, day:int =2) -> pd.DataFrame:
         The factor is based on the relative price change between the current
         price and the price ``day - 1`` periods ago.
     """
-    cols = [t for t in tickers if t in df.columns]
-    mmt = df[cols].pct_change(day - 1)
-    mmt.columns = [f"{day}DayMomentum_{t}" for t in cols]
+    cols = [t for t in tickers if t in close.columns]
+    mmt = close[cols].pct_change(day - 1)
     return mmt
-    
-def EWMA(window_data, wk: float)->float: #做.apply()时由于切分下来的nparray会直接传入第一个参数，因此要把window_data写在最前面
-    """Compute an exponential weighted moving average over a window.
+ 
+# def EWMA(window_data, wk: float)->float: #做.apply()时由于切分下来的nparray会直接传入第一个参数，因此要把window_data写在最前面
+#     """Compute an exponential weighted moving average over a window.
 
-    Args:
-        window_data: One-dimensional numpy array passed by ``rolling.apply``.
-        wk: Exponential decay factor.
+#     Args:
+#         window_data: One-dimensional numpy array passed by ``rolling.apply``.
+#         wk: Exponential decay factor.
 
-    Returns:
-        The weighted sum for the supplied window.
+#     Returns:
+#         The weighted sum for the supplied window.
 
-    Notes:
-        The function is designed for use with ``Series.rolling(...).apply(...)``
-        and expects the newest observation to contribute the most weight.
-    """
-    ewma=0
-    period = len(window_data)
-    for i in range(period):
-        ewma += wk**(i)*window_data[period-i-1]
-    return ewma
+#     Notes:
+#         The function is designed for use with ``Series.rolling(...).apply(...)``
+#         and expects the newest observation to contribute the most weight.
+#     """
+#     ewma=0
+#     period = len(window_data)
+#     for i in range(period):
+#         ewma += wk**(i)*window_data[period-i-1]
+#     return ewma
 
+@factor_register('ShortTermReversal')
 def ShortTermReversal(excess_return: pd.DataFrame,tickers: list, halflife: int, period: int)->pd.DataFrame:
     """Compute a short-term reversal factor from lagged excess returns.
 
@@ -118,6 +122,7 @@ def get_short_term_reversal_ewma(excess_return, ticker, period, halflife):
     return price.rolling(period).apply(ewma_func, raw=True)
     '''
 
+@factor_register('TwentyDayVolatility')
 def TwentyDayVolatility(daily_return:pd.DataFrame, tickers:list)->pd.DataFrame: #获取20日波动率
     """Compute 20-day rolling volatility for each ticker.
 
@@ -129,8 +134,10 @@ def TwentyDayVolatility(daily_return:pd.DataFrame, tickers:list)->pd.DataFrame: 
         A dataframe of 20-day rolling standard deviations.
     """
     cols = [t for t in tickers if t in daily_return.columns]
-    return daily_return[cols].rolling(20).std()
+    twenty_day_volatility = daily_return[cols].rolling(20).std()
+    return twenty_day_volatility
 
+@factor_register('TwentyDayNegVotality')
 def TwentyDayNegVotality(daily_return:pd.DataFrame, tickers:list)->pd.DataFrame: #获取20日负收益波动率
     """Compute 20-day rolling volatility using only negative returns.
 
@@ -149,6 +156,7 @@ def TwentyDayNegVotality(daily_return:pd.DataFrame, tickers:list)->pd.DataFrame:
     neg_return = daily_return[cols].where(daily_return[cols] < 0) #满足cond的保留，不满足的变成NaN
     return neg_return.rolling(window=20, min_periods=1).std()
 
+@factor_register('TwentyDayAvgVol')
 def TwentyDayAvgVol(volume:pd.DataFrame, tickers:list)->pd.DataFrame: #20日平均成交量因子
     """Compute 20-day average trading volume for each ticker.
 
@@ -160,8 +168,10 @@ def TwentyDayAvgVol(volume:pd.DataFrame, tickers:list)->pd.DataFrame: #20日平�
         A dataframe of 20-day rolling mean volume values.
     """
     cols = [t for t in tickers if t in volume.columns]
-    return volume[cols].rolling(20).mean()
+    volume_avg = volume[cols].rolling(20).mean()
+    return volume_avg
 
+@factor_register('VolPriceCorr')
 def VolPriceCorr(volume:pd.DataFrame, daily_return:pd.DataFrame, tickers:list)->pd.DataFrame: #20日量价相关系数
     """Compute 20-day rolling correlation between returns and volume.
 
@@ -178,4 +188,5 @@ def VolPriceCorr(volume:pd.DataFrame, daily_return:pd.DataFrame, tickers:list)->
         price movement over a 20-day window.
     """
     cols = [t for t in tickers if t in daily_return.columns and t in volume.columns]
-    return daily_return[cols].rolling(20).corr(volume[cols])
+    vol_price_corr = daily_return[cols].rolling(20).corr(volume[cols])
+    return vol_price_corr

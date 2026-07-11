@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  #以脚本方式执行时定位repo根目录
+from quantfactor.factor_register import calculate_all_factors
 
 from quantfactor import factor_mining
 import pandas as pd
@@ -21,26 +22,26 @@ if __name__ == "__main__":
     volume_path = os.path.join(os.getcwd(),'data/processed', "processed_volume.parquet")
     final_path = os.path.join(os.getcwd(),'tmp/factors', "factors.parquet")
 
-    def calculate_factors(close:pd.DataFrame, volume:pd.DataFrame, tickers:list ,days: int, half_life:int , period: int )->pd.DataFrame:
-        batch = pd.DataFrame()
-        daily_return=factor_mining.daily_return(close, tickers)
-        excess_return=factor_mining.excess_return(daily_return)
-        momentum=factor_mining.momentum(close, tickers, day=days)
-        ShortTermReversal = factor_mining.ShortTermReversal(excess_return=excess_return, tickers=tickers, halflife=half_life, period=period)
-        TwentyDayVolatility = factor_mining.TwentyDayVolatility(daily_return=daily_return, tickers=tickers)
-        TwentyDayNegVotality = factor_mining.TwentyDayNegVotality(daily_return=daily_return, tickers=tickers)
-        TwentyDayAvgVol = factor_mining.TwentyDayAvgVol(volume=volume, tickers=tickers)
-        VolPriceCorr=factor_mining.VolPriceCorr(volume=volume,daily_return=daily_return,tickers=tickers)
-        batch = pd.concat([daily_return.add_prefix("DailyReturn_"), 
-                           excess_return.add_prefix("ExcessReturn_"), 
-                           momentum, 
-                           ShortTermReversal.add_prefix("ShortTermReversal_"), 
-                           TwentyDayVolatility.add_prefix("TwentyDayVolatility_"), 
-                           TwentyDayNegVotality.add_prefix("TwentyDayNegVolatility_"), 
-                           TwentyDayAvgVol.add_prefix("TwentyDayAvgVol_"), 
-                           VolPriceCorr.add_prefix("VolPriCorr_")],
-                           axis=1)
-        return batch
+    # def calculate_factors(close:pd.DataFrame, volume:pd.DataFrame, tickers:list ,days: int, half_life:int , period: int )->pd.DataFrame:
+    #     batch = pd.DataFrame()
+    #     daily_return = factor_mining.daily_return(close, tickers)
+    #     excess_return = factor_mining.excess_return(daily_return)
+    #     momentum = factor_mining.momentum(close, tickers, day=days)
+    #     ShortTermReversal = factor_mining.ShortTermReversal(excess_return=excess_return, tickers=tickers, halflife=half_life, period=period)
+    #     TwentyDayVolatility = factor_mining.TwentyDayVolatility(daily_return=daily_return, tickers=tickers)
+    #     TwentyDayNegVotality = factor_mining.TwentyDayNegVotality(daily_return=daily_return, tickers=tickers)
+    #     TwentyDayAvgVol = factor_mining.TwentyDayAvgVol(volume=volume, tickers=tickers)
+    #     VolPriceCorr = factor_mining.VolPriceCorr(volume=volume,daily_return=daily_return,tickers=tickers)
+    #     batch = pd.concat([daily_return, 
+    #                        excess_return, 
+    #                        momentum, 
+    #                        ShortTermReversal, 
+    #                        TwentyDayVolatility, 
+    #                        TwentyDayNegVotality, 
+    #                        TwentyDayAvgVol, 
+    #                        VolPriceCorr],
+    #                        axis=1)
+    #     return batch
 
     
     def data_proceeding(close_path: str, volume_path: str, final_path:str) -> pd.DataFrame: #因子计算需要历史窗口,不能只取新数据。

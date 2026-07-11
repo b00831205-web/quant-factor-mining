@@ -3,11 +3,8 @@ import os
 from scipy import stats
 import numpy as np
 from statsmodels.stats.multitest import multipletests
-import warnings
-import re
-warnings.filterwarnings('ignore')
 
-def different_holding_period(close:pd.DataFrame, tickers: list, periods: list | int = [1,5,20])->pd.DataFrame:
+def forward_return(close:pd.DataFrame, tickers: list = None, periods: list[int] | int = None)->dict:
     """Build forward holding-period returns for each ticker.
 
     Args:
@@ -23,15 +20,19 @@ def different_holding_period(close:pd.DataFrame, tickers: list, periods: list | 
         The return series are shifted forward, so the value at date ``t`` is the
         return realized over the next ``period`` trading days.
     """
-    cols = [t for t in tickers if t in close.columns]
-    blocks = []
+    if isinstance(periods, int):
+        periods = [periods]
+    if periods is None:
+        periods = [1,5,20]  #将默认参数放到函数中可以防止默认变量在函数内被更改
+    if tickers is None: 
+        cols = close.columns.tolist()
+    else:
+        cols = tickers
+    forward_return = {}
     for period in periods:
         # 整个frame一次pct_change, 替代逐列插入(逐列插入会触发DataFrame碎片化, 570*3列时极慢)
-        block = close[cols].pct_change(period).shift(-period)
-        block.columns = [f"{period}DaysHoldingPeriod_{t}" for t in cols]
-        blocks.append(block)
-    different_holding = pd.concat(blocks, axis=1)
-    return different_holding, periods
+        forward_return[period] = close[cols].pct_change(period).shift(-period)
+    return forward_return
 
 def data_standarization(df:pd.DataFrame)->pd.DataFrame:
     """Cross-sectionally standardize factor columns to the range [-1, 1].
@@ -48,18 +49,13 @@ def data_standarization(df:pd.DataFrame)->pd.DataFrame:
         uses rank-based scaling, which is less sensitive to outliers than raw
         value normalization.
     """
-    factors = list(set(cols.rsplit("_",1)[0] for cols in df.columns))
-    tickers = list(set(cols.rsplit("_",1)[1] for cols in df.columns))
-    blocks = []
-    for factor in factors:
-        cols = [f'{factor}_{ticker}' for ticker in tickers]
-        cols = [c for c in cols if c in df.columns]
-        ranked = df[cols].rank(axis=1,pct=True)*2-1
-        blocks.append(ranked)
-        #最大值归一化受极端值影响大，不建议使用
-    return pd.concat(blocks, axis=1) #一次concat替代逐块列插入, 避免碎片化
+    return {
+        factor_name: factor_df.rank(axis = 1, pct=True)*2-1
+        for factor_name, factor_df in df.items()
+    } #一次concat替代逐块列插入, 避免碎片化
 
-def TM_Information_correlation(tickers : list, factors: pd.DataFrame, different_holding_period: pd.DataFrame, output_path=str)->pd.DataFrame:
+
+def TM_Information_correlation(factors: dict[str, pd.DataFrame], forward_returns: dict[int, pd.DataFrame], output_path: str)->pd.DataFrame:
     """Compute time-series information correlation for each ticker.
 
     Args:
@@ -76,45 +72,20 @@ def TM_Information_correlation(tickers : list, factors: pd.DataFrame, different_
         The function groups columns by ticker first and then computes the
         correlation between factor series and holding-period return series.
     """
-    TM_IC_matrix=pd.DataFrame() #时序IC
-    
-    def ticker_dict(tickers: list, df:pd.DataFrame)->dict:
-        tickers_dict={ticker:[] for ticker in tickers}
-        for ticker in tickers:
-            for column in df.columns:
-                if column.rsplit("_",1)[1] == ticker:
-                    tickers_dict[ticker].append(column)
-        return tickers_dict
-    
-    ticker_factor_dict={}
-    for ticker, factor in ticker_dict(tickers, factors).items():
-        if factor:
-            df = factors[factor].copy()
-            df.columns=[c.rsplit('_',1)[0] for c in factor]
-            ticker_factor_dict[ticker] = df
-    
-    ticker_holding_dict={}
-    for ticker, holding_period in ticker_dict(tickers, different_holding_period).items():
-        if holding_period:
-            df = different_holding_period[holding_period].copy()
-            df.columns=[c.rsplit('_',1)[0] for c in holding_period]
-            ticker_holding_dict[ticker] = df
-    
-    result=[]
-    for ticker, factor in ticker_factor_dict.items():
-        holding_df =ticker_holding_dict[ticker]
-        for h_col in holding_df.columns:
-            ic = factor.corrwith(holding_df[h_col],method="pearson",axis =0)
-            ic.name=f'{ticker}_{h_col}'
-            result.append(ic)
-    TM_IC_matrix = pd.concat(result,axis=1)
-    
+    result = {}
+    for factor_name ,factor_df in factors.items():
+        factor_ticker = list(factor_df.columns)
+        for period, return_df in forward_returns.items():
+            forward_returns_ticker = list(return_df.columns)
+            overlap = list(set(factor_ticker) & set(forward_returns_ticker))
+            ic_series = factor_df[overlap].corrwith(return_df[overlap], method= 'pearson',axis=0)
+            result[(factor_name, period)] = ic_series
+    TM_IC_matrix=pd.DataFrame(result)
+    TM_IC_matrix.columns.names = ['factor', 'period']
     TM_IC_matrix.to_parquet(os.path.join(os.getcwd(), output_path))
-    print("Time-series information correlation computation complete")
+    print("time Series information correlation computation complete")
 
-    return TM_IC_matrix
-
-def CS_Information_Correlation(factors:pd.DataFrame, different_holding_period: pd.DataFrame, output_path: str)-> pd.DataFrame:
+def CS_Information_Correlation(factors: dict[str, pd.DataFrame], forward_returns: dict[int, pd.DataFrame], output_path: str)-> pd.DataFrame:
     """Compute cross-sectional information correlation across dates.
 
     Args:
@@ -130,55 +101,16 @@ def CS_Information_Correlation(factors:pd.DataFrame, different_holding_period: p
         This function correlates factor values with same-date forward returns
         across the cross section of tickers.
     """
-    CS_IC_matrix=pd.DataFrame() #截面IC
-    
-    #获取ticker和因子列表
-    ticker_list=[]
-    factor_list=[]
-    for column in factors.columns:
-        factor, ticker = column.rsplit("_",1)
-        factor_list.append(factor)
-        ticker_list.append(ticker)
-    factor_list=list(set(factor_list))
-    ticker_list=list(set(ticker_list))
-    
-    #获取持有期列表
-    holding_period_list =[]
-    for column in different_holding_period.columns:
-        holding_period, ticker = column.rsplit("_",1)
-        holding_period_list.append(holding_period)
-    holding_period_list = list(set(holding_period_list))
-    
-    def factor_dict(factors: list, df:pd.DataFrame) ->dict:
-        factors_dict={factor: [] for factor in factors}
-        for factor in factors:
-            for column in df.columns:
-                if column.rsplit("_",1)[0] == factor:
-                    factors_dict[factor].append(column)
-        return factors_dict
-    
-    ticker_factor_dict={}
-    for factor, ticker in factor_dict(factor_list, factors).items():
-        if ticker:
-            df = factors[ticker].copy()
-            df.columns=[c.rsplit('_',1)[1] for c in ticker]
-            ticker_factor_dict[factor] = df
-    
-    ticker_holding_dict={}
-    for holding_period, ticker in factor_dict(holding_period_list, different_holding_period).items():
-        if ticker:
-            df = different_holding_period[ticker].copy()
-            df.columns=[c.rsplit('_',1)[1] for c in ticker]
-            ticker_holding_dict[holding_period] = df
-
-    result=[]
-    for factor, factor_df in ticker_factor_dict.items():
-        for holding_period , holding_period_ticker in ticker_holding_dict.items():
-            ic_series= factor_df.corrwith(holding_period_ticker[factor_df.columns], method='pearson',axis=1)
-            ic_series.name=f"{factor}_{holding_period}"
-            result.append(ic_series)
-    CS_IC_matrix=pd.concat(result, axis=1)
-
+    result = {}
+    for factor_name ,factor_df in factors.items():
+        factor_ticker = list(factor_df.columns)
+        for period, return_df in forward_returns.items():
+            forward_returns_ticker = list(return_df.columns)
+            overlap = list(set(factor_ticker) & set(forward_returns_ticker))
+            ic_series = factor_df[overlap].corrwith(return_df[overlap], method= 'pearson',axis=1)
+            result[(factor_name, period)] = ic_series
+    CS_IC_matrix=pd.DataFrame(result)
+    CS_IC_matrix.columns.names = ['factor', 'period']
     CS_IC_matrix.to_parquet(os.path.join(os.getcwd(), output_path))
     print("Cross-sectional information correlation computation complete")
 
@@ -193,6 +125,9 @@ def summary(cross_section_IC_matrix:pd.DataFrame)->pd.DataFrame:
 
     Returns:
         A summary dataframe indexed by column name.
+
+    Input : ic_df, MultiIndex column(factor, holding_period)
+    Output : DataFrame, MultiIndex index (factor, holding_period)
     """
     return pd.DataFrame({
         'IC_mean' : cross_section_IC_matrix.mean(),
@@ -216,10 +151,11 @@ def resample_summary(cross_section_IC: pd.DataFrame, periods:list|int)-> pd.Data
         The dataframe is sub-sampled using ``iloc[::period]`` to reduce overlap
         dependence when the holding period is longer than one day.
     """
+    if isinstance(periods, int):
+        periods = [periods]
     result = {}
     for period in periods:
-        columns = [c for c in cross_section_IC.columns if c.rsplit('_',1)[1]==f"{period}DaysHoldingPeriod"]
-        period_df = cross_section_IC[columns]
+        period_df = cross_section_IC.xs(period, level = 'period', axis = 1) #xs筛选出的就是df
         summary_df = period_df.iloc[::period]
         result[f'{period}HoldingPeriodSummary']=summary(summary_df)   
     result_df = pd.concat(result.values())
@@ -243,7 +179,7 @@ def newey_west_summary(cross_section_IC: pd.DataFrame, lag_multiplier: int = 2)-
     """
     rows = {}
     for col in cross_section_IC.columns:
-        period = int(re.search(r'(\d+)DaysHoldingPeriod$', col).group(1))
+        factor, period = col
         lag = lag_multiplier * max(period - 1, 0)
         s = cross_section_IC[col].dropna()
         n = len(s)
@@ -257,6 +193,7 @@ def newey_west_summary(cross_section_IC: pd.DataFrame, lag_multiplier: int = 2)-
         rows[col] = {'IC_mean': mu, 'IC_std': s.std(), 'IR': mu / s.std(),
                      'n': n, 'lag': lag, 'NW_t': mu / se}
     nw_df = pd.DataFrame(rows).T
+    nw_df.index =nw_df.index.set_names(['factor', 'period'])
     nw_df['p_value'] = stats.t.sf(nw_df['NW_t'].abs(), df=nw_df['n'] - 1) * 2
     return nw_df
 
@@ -292,7 +229,7 @@ def multiple_testing(summary_df:pd.DataFrame)->pd.DataFrame:
     significant_t['BH_significant'] = rej_bonf
     return significant_t
 
-def orthogonal_analysis(factors_ticker: pd.DataFrame):
+def orthogonal_analysis(factors: dict[str, pd.DataFrame]):
     """Compute average factor correlation and identify highly correlated pairs.
 
     Args:
@@ -305,16 +242,11 @@ def orthogonal_analysis(factors_ticker: pd.DataFrame):
         Dates with missing factor columns are skipped. Factors whose absolute
         average correlation exceeds 0.5 are treated as highly correlated.
     """
-    factors = sorted(set(col.rsplit('_',1)[0] for col in factors_ticker.columns))
-    tickers = sorted(set(col.rsplit('_',1)[1] for col in factors_ticker.columns))
+    factor = sorted(factors.keys())
+    ticker = sorted(set().union(*[tickers.columns.tolist() for tickers in factors.values()])) #*是“解包”操作，把列表拆成多个独立参数传给union
 
     #每个因子重排成一张 dates*tickers 的宽表, 列顺序统一, 后续全部是frame级向量化操作
-    frames = {}
-    for f in factors:
-        cols = [c for c in factors_ticker.columns if c.rsplit('_',1)[0] == f]
-        block = factors_ticker[cols]
-        block.columns = [c.rsplit('_',1)[1] for c in cols]
-        frames[f] = block.reindex(columns=tickers)
+    frames = { f: factors[f].reindex(columns = ticker) for f in factor}
 
     #有效日: 每个因子当天至少有一个非NaN值(与原逐日实现的跳过条件一致)
     valid = pd.concat({f: frames[f].notna().any(axis=1) for f in factors}, axis=1).all(axis=1)
@@ -323,7 +255,7 @@ def orthogonal_analysis(factors_ticker: pd.DataFrame):
     avg_corr = pd.DataFrame(1.0, index=factors, columns=factors) #对角线恒为1
     for i, fa in enumerate(factors):
         a = frames[fa]
-        for fb in factors[i+1:]:
+        for fb in factor[i+1:]:
             b = frames[fb]
             #逐日截面Pearson相关的向量化展开: 每天在两因子共同非NaN的ticker上算相关
             mask = a.notna() & b.notna()
@@ -344,7 +276,7 @@ def orthogonal_analysis(factors_ticker: pd.DataFrame):
     }
     return avg_corr, high_corr_dict
 
-def orthogonalize(factor_df: pd.DataFrame, high_corr_dict: dict, ic_summary:pd.DataFrame, threshold: float = 0.03, min_period: int = 60)->pd.DataFrame:
+def orthogonalize(factors: dict[str, pd.DataFrame], high_corr_dict: dict, ic_summary:pd.DataFrame, threshold: float = 0.03, min_period: int = 60)->dict:
     """Orthogonalize highly correlated factors using expanding regression.
 
     Args:
@@ -370,39 +302,26 @@ def orthogonalize(factor_df: pd.DataFrame, high_corr_dict: dict, ic_summary:pd.D
             pair = tuple(sorted([factor, factor_corr]))
             pairs.add(pair)
     
-    factor_ir = {}
-    for raw in ic_summary.index:
-        factor = re.sub(r'_\d+DaysHoldingPeriod$','',raw)
-        ir = abs(ic_summary.loc[raw, "IR"])
-        if factor not in factor_ir:
-            factor_ir[factor] = []
-        factor_ir[factor].append(ir)
-    factor_ir = {f: sum(irs)/len(irs) for f, irs in factor_ir.items()}
+    factor_ir = ic_summary['IR'].abs().groupby(level = 'factor').mean()
 
     print("Average IR:")
     print({k: round(v,4) for k,v in sorted(factor_ir.items())})
     print(f"threshold={threshold}, will be dropped because it is below the threshold")
 
-    result_df = factor_df.copy()
+    result = factors.copy()
     drop = set()
     orthogonalized = set()
     
-    def drop_columns(result_df:pd.DataFrame, factor_a: str, factor_b:str, drop:set)->pd.DataFrame:
-        col_a = [c for c in result_df.columns if c.rsplit("_",1)[0]==factor_a]
-        result_df = result_df.drop(columns=col_a)
-        drop.add(factor_a)
-        return result_df
 
     for factor_a, factor_b in pairs:
         if factor_a in drop or factor_b in drop:
             continue
-        ir_a = factor_ir.get(factor_a, 0)
+        ir_a = factor_ir.get(factor_a, 0) #pd.Series有get操作，但不是字典
         ir_b = factor_ir.get(factor_b, 0)
 
         if ir_a < threshold and ir_b < threshold:
-            col_a = [c for c in result_df.columns if c.rsplit('_',1)[0]==factor_a]
-            col_b = [c for c in result_df.columns if c.rsplit('_',1)[0]==factor_b]
-            result_df = result_df.drop(columns=col_a + col_b)
+            result.pop(factor_a)
+            result.pop(factor_b)
             drop.update([factor_a, factor_b])
             continue
             
@@ -410,36 +329,30 @@ def orthogonalize(factor_df: pd.DataFrame, high_corr_dict: dict, ic_summary:pd.D
         to_orthogonalize = factor_b if ir_a > ir_b else factor_a
 
         if ir_a < threshold:
-            result_df = drop_columns(result_df, factor_a, factor_b, drop)
+            result.pop(factor_a)
+            drop.add(factor_a)
 
         elif ir_b < threshold:
             
-            result_df = drop_columns(result_df, factor_b, factor_a, drop)
+            result.pop(factor_b)
+            drop.add(factor_b)
                 
         if ir_a >= threshold and ir_b >= threshold:
             if to_orthogonalize in orthogonalized:
                 continue
-            tickers = list(set([t.rsplit("_",1)[1] for t in result_df.columns]))
-
-            print(f"Number of columns before orthogonalization: {len(result_df.columns)}")
-            for ticker in tickers:
-                x_col = f"{keeper}_{ticker}"
-                y_col = f"{to_orthogonalize}_{ticker}"
-                if x_col not in result_df.columns or y_col not in result_df.columns:
-                    continue
-                x = result_df[x_col]
-                y = result_df[y_col]
-                
-                expanding_cov = x.expanding(min_periods= min_period).cov(y)
-                expanding_var = x.expanding(min_periods= min_period).var()
-                beta_series = expanding_cov/expanding_var
-                
-                residuals = y - beta_series * x
-                if y_col in result_df.columns:
-                    result_df = result_df.drop(columns = y_col)
-                result_df[y_col] = residuals
+            if keeper not in result.keys() or to_orthogonalize not in result.keys():
+                continue
+            x = result[keeper]
+            y = result[to_orthogonalize]
+            
+            expanding_cov = x.expanding(min_periods= min_period).cov(y)
+            expanding_var = x.expanding(min_periods= min_period).var()
+            beta_series = expanding_cov/expanding_var
+            
+            residuals = y - beta_series * x
+            result[to_orthogonalize] = residuals
             orthogonalized.add(to_orthogonalize)
-    return result_df
+    return result
 
 def time_series_stationary_test(CS_IC_matrix:pd.DataFrame, rolling_period:int =126, periods:list = [1,7,15,20])-> pd.DataFrame:
     """Compute rolling IC, autocorrelation, and yearly IC summaries.
@@ -467,7 +380,7 @@ def time_series_stationary_test(CS_IC_matrix:pd.DataFrame, rolling_period:int =1
     for col in CS_IC_matrix.columns:        
         for period in periods:
                 # acf_ic
-                acf_ic[f"{col}_{period}_ACF"] = CS_IC_matrix[col].corr(CS_IC_matrix[col].shift(period), method="pearson") #corr是对series, corrwith是对dataframe
+                acf_ic[(col,period)] = CS_IC_matrix[col].corr(CS_IC_matrix[col].shift(period), method="pearson") #corr是对series, corrwith是对dataframe
     acf_df = pd.Series(acf_ic).to_frame(name = 'ACF') #字典的每个value是一个标量，不能直接用pd.DataFrame，需要先转成Series
     yearly_summary={}
     # 分段IC    
@@ -492,14 +405,10 @@ def get_constitunents_at_date(historical_df: pd.DataFrame, date: pd.Timestamp)->
         The date comparison is inclusive. Missing ``end_date`` values are treated
         as open-ended membership.
     """
-    start = pd.to_datetime(historical_df['start_date'])
-    end = pd.to_datetime(historical_df['end_date'])
-    #注意运算符优先级: end条件必须整体括起来, 否则 end>=date 的行会绕过 start<=date 的检查,
-    #导致尚未加入指数的股票被提前计入截面
-    mask = (start <= date) & (end.isnull() | (end >= date))
-    return set(historical_df.loc[mask, 'ticker'])
+    mask = (historical_df['start_date'] <= date) & (historical_df['end_date'].isnull() | (historical_df['end_date'] >= date))
+    return set(historical_df.loc[mask, 'ticker'].str.replace('.','-',regax = False))
 
-def train_test_analysis(cs_df: pd.DataFrame, factor_ticker: pd.DataFrame, close: pd.DataFrame , train_end: str, test_start: str, periods: list|int = [1,5,20]):
+def train_test_analysis(cs_df: pd.DataFrame, factors: dict[str, pd.DataFrame], close: pd.DataFrame , train_end: str, test_start: str, periods: list|int = None):
     """Run the full train/test IC workflow and orthogonalization pipeline.
 
     Args:
@@ -518,28 +427,36 @@ def train_test_analysis(cs_df: pd.DataFrame, factor_ticker: pd.DataFrame, close:
         The training sample is used to select significant factors and build the
         orthogonalization mapping before evaluating the test period.
     """
+    if isinstance(periods, int):
+        periods = [periods]
+    
+    if periods is None:
+        periods = [1,5,20]
+
     train_cs_df = cs_df[cs_df.index <= train_end]
     test_cs_df = cs_df[cs_df.index >= test_start]
 
-    different_holding_period_train, _ = different_holding_period(close[close.index<=train_end], close.columns, periods)
-    different_holding_period_train =data_standarization(different_holding_period_train)
-    different_holding_period_test, _ = different_holding_period(close[close.index>=test_start], close.columns, periods)
+    forward_return_train = forward_return(close[close.index<=train_end], close.columns, periods)
+    forward_return_train_stand = data_standarization(forward_return_train)
+    forward_return_test = forward_return(close[close.index>=test_start], close.columns, periods)
+    forward_return_test_stand = data_standarization(forward_return_test)
 
-    train_factor_ticker = factor_ticker[factor_ticker.index <= train_end]
-    test_factor_ticker = factor_ticker[factor_ticker.index >= test_start]
+    train_factor_ticker = {factor_name : train_factor_ticker.loc[:train_end] for factor_name, train_factor_ticker in factors.items()}
+    test_factor_ticker = {factor_name : test_factor_ticker.loc[test_start:] for factor_name, test_factor_ticker in factors.items()}
 
     resample_summary_train = resample_summary(train_cs_df, periods)
     print(resample_summary_train)
     print(resample_summary_train.index.tolist()[:5])
 
     orth_analysis,  high_corr_dict= orthogonal_analysis(train_factor_ticker)
-    orthogonalize_result = orthogonalize(factor_ticker, high_corr_dict, resample_summary_train)
-    excess_cols = [c for c in orthogonalize_result.columns if c.rsplit("_",1)[0] == "ExcessReturn"]
-    orthogonalize_result = orthogonalize_result.drop(columns=excess_cols)
-    orth_test = orthogonalize_result[orthogonalize_result.index >= test_start]
+    orthogonalize_result = orthogonalize(factors, high_corr_dict, resample_summary_train)
+    orthogonalize_result.pop('excess_return')
+    
+    orth_train = {factor_name : orth_result.loc[:train_end] for factor_name, orth_result in orthogonalize_result.items()}
+    orth_test = {factor_name : orth_result.loc[test_start: ] for factor_name, orth_result in orthogonalize_result.items()}
 
-    cs_df_orth_train = CS_Information_Correlation(factors = orthogonalize_result[orthogonalize_result.index <= train_end],
-                                                  different_holding_period=different_holding_period_train,
+    cs_df_orth_train = CS_Information_Correlation(factors = orth_train,
+                                                  forward_returns=forward_return_train_stand,
                                                   output_path = 'tmp/ic_test/cs_df_orth_train.parquet')
     #主检验: Newey-West(全日频IC, 修正重叠持有期自相关)
     nw_summary_orth_train = newey_west_summary(cs_df_orth_train)
@@ -553,8 +470,18 @@ def train_test_analysis(cs_df: pd.DataFrame, factor_ticker: pd.DataFrame, close:
     multiple_testing_resample = multiple_testing(resample_summary_orth_train)
     print("=== Down-sampling control ===")
     print("Number of True values in BH_significant:", multiple_testing_resample['BH_significant'].sum())
-    significant_factor = list(set([idx.rsplit('_',1)[0] for idx in multiple_testing_train.index if multiple_testing_train.loc[idx, 'BH_significant'] == True]))
-
+    significant_factor = (
+    multiple_testing_resample[multiple_testing_resample['BH_significant']]
+    .index.get_level_values('factor')
+    .unique()
+    .tolist()
+    )
+    significant_factor_nw = (
+    multiple_testing_train[multiple_testing_train['BH_significant']]
+    .index.get_level_values('factor')
+    .unique()
+    .tolist()
+)
     rolling_ic_train , acf_train, yearly_train = time_series_stationary_test(cs_df_orth_train)
 
     return {"resample_summary_train":resample_summary_train,
@@ -567,9 +494,12 @@ def train_test_analysis(cs_df: pd.DataFrame, factor_ticker: pd.DataFrame, close:
             "high_corr_dict": high_corr_dict,
             "test_cs_df": test_cs_df,
             "test_factor_ticker": test_factor_ticker,
-            "different_holding_period_train" : different_holding_period_train,
-            "different_holding_period_test" : different_holding_period_test,
+            "forward_return_train" : forward_return_train,
+            "forward_return_train_stand" : forward_return_train_stand,
+            "forward_return_test" : forward_return_test,
+            "forward_return_test_stand" : forward_return_test_stand,
             "significant_factors": significant_factor,
+            "significant_factors_nw": significant_factor_nw,
             "rolling_ic_train": rolling_ic_train,
             "acf_train": acf_train,
             "yearly_train" : yearly_train}

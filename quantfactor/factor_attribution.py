@@ -13,8 +13,6 @@ Library and place under ``tmp/ff3/``):
 import pandas as pd
 import statsmodels.api as sm
 
-from quantfactor.back_testing import expand_to_daily_returns
-
 
 def load_french_factors(ff3_path: str, mom_path: str) -> pd.DataFrame:
     """Load and merge daily FF3 and momentum factors from Ken French CSVs.
@@ -70,18 +68,3 @@ def carhart_attribution(daily_returns: pd.DataFrame, factors: pd.DataFrame, maxl
                 .dropna())
     x = sm.add_constant(combined[['Mkt-RF', 'SMB', 'HML', 'Mom']])
     return sm.OLS(combined['long_short'], x).fit(cov_type='HAC', cov_kwds={'maxlags': maxlags})
-
-
-if __name__ == "__main__":
-    ticker_history = pd.read_pickle('tmp/back_test/test_ticker_history.pkl')
-    history = ticker_history['20DaysHoldingPeriod']['TwentyDayAvgVol']
-    close_data = pd.read_parquet('data/processed/processed_close.parquet')
-
-    daily_wide = expand_to_daily_returns(history, close_data)
-    factors = load_french_factors('tmp/ff3/F-F_Research_Data_Factors_daily.csv',
-                                  'tmp/ff3/F-F_Momentum_Factor_daily.csv')
-    model = carhart_attribution(daily_wide, factors)
-    print(model.summary())
-    alpha_daily = model.params['const']
-    print(f"\nAnnualized alpha: {alpha_daily * 252:.2%} (NW t = {model.tvalues['const']:.2f}, "
-          f"p = {model.pvalues['const']:.4f})")
