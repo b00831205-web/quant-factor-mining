@@ -354,7 +354,7 @@ def orthogonalize(factors: dict[str, pd.DataFrame], high_corr_dict: dict, ic_sum
             orthogonalized.add(to_orthogonalize)
     return result
 
-def time_series_stationary_test(CS_IC_matrix:pd.DataFrame, rolling_period:int =126, periods:list = [1,7,15,20])-> pd.DataFrame:
+def time_series_stationary_test(CS_IC_matrix:pd.DataFrame, rolling_period:int =126, periods:list = None)-> pd.DataFrame:
     """Compute rolling IC, autocorrelation, and yearly IC summaries.
 
     Args:
@@ -368,6 +368,9 @@ def time_series_stationary_test(CS_IC_matrix:pd.DataFrame, rolling_period:int =1
     Notes:
         The index is converted to ``datetime64`` before grouping and rolling.
     """
+    if periods is None:
+        periods = [1,5,20]
+
     rolling_window_IC={}
     acf_ic={}
     

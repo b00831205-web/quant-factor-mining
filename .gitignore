@@ -21,6 +21,14 @@ __pycache__/
 .venv-win/
 .ipynb_checkpoints/
 
+# --- build & test artifacts ---
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
 # --- local scratch / superseded scripts ---
 scripts/
 

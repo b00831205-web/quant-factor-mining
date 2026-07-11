@@ -10,9 +10,9 @@ import sys
 import os
 
 #两条路径都要: 包内有 "import Datareader" 的裸模块导入,
-#也有 "from quantfactor.ic_calculator import ..." 的包路径导入
+#也有 "from quantmine.ic_calculator import ..." 的包路径导入
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "quantfactor"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "quantmine"))
 
 # ============================================================
 # 真实数据路径 —— 按你的实际项目结构调整这几行

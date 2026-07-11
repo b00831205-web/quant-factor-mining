@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantfactor.ic_calculator import forward_return
+from quantmine.ic_calculator import forward_return
 from conftest import requires_real_data, REAL_CLOSE_PATH
 
 TOLERANCE = 1e-12

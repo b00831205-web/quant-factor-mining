@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  #以脚本方式执行时定位repo根目录
 
-from quantfactor.data_acquisition import data_acquisition
+from quantmine.data_acquisition import data_acquisition
 import argparse
 import datetime
 import os

@@ -42,7 +42,7 @@ def dummy_registry():
 
 # 直接import真实实现: 之前这里放的是"期望语义"的本地复制版,
 # 测试绿了但factor_register.py里的真代码并没有这个修复——教训是被测函数必须import
-from quantfactor.factor_register import call_single_factors as call_single_factor
+from quantmine.factor_register import call_single_factors as call_single_factor
 
 
 def test_param_pool_value_takes_priority_over_default(dummy_registry):

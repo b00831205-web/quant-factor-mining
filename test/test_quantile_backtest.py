@@ -15,8 +15,8 @@ import pandas as pd
 import pandas.testing as pdt
 import pytest
 
-from quantfactor.back_testing import quantile_backtest
-from quantfactor.datareader import StaticUniverse
+from quantmine.back_testing import quantile_backtest
+from quantmine.datareader import StaticUniverse
 
 N_DAYS = 12
 TICKERS = [f"T{i}" for i in range(10)]

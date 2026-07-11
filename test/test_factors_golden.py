@@ -63,9 +63,9 @@ class TestFactorsGoldenValues:
 
     @pytest.fixture(scope="class")
     def computed_factors(self):
-        import quantfactor.factor_mining  # noqa: F401  触发装饰器注册，必须在这里import
-        from quantfactor.factor_register import calculate_all_factors, build_param_pool
-        from quantfactor.datareader import MarketData
+        import quantmine.factor_mining  # noqa: F401  触发装饰器注册，必须在这里import
+        from quantmine.factor_register import calculate_all_factors, build_param_pool
+        from quantmine.datareader import MarketData
 
         close = pd.read_parquet(REAL_CLOSE_PATH)
         volume = pd.read_parquet(REAL_VOLUME_PATH)

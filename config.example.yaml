@@ -1,0 +1,33 @@
+# quantmine 配置示例 —— 复制为 config.yaml 后按需修改。
+# 所有 key 和字段都可省略, 省略即使用默认值(下方标注的即默认值)。
+
+data_acquisition:
+  checkpoint_dir: tmp/checkpoint
+  max_retries: 3
+  wait: 60                  # 批次下载失败后的重试等待秒数
+
+momentum:
+  day: 5                    # 动量回看天数(5 = 5日动量)
+
+forward_return:
+  periods: [1, 5, 20]       # 持有期(交易日)
+
+newey_west:
+  lag_multiplier: 2         # NW修正的lag = lag_multiplier * (持有期-1)
+
+orthogonalize:
+  threshold: 0.03           # 平均|IR|低于该值的因子被剔除
+  min_period: 60            # expanding beta 的最小估计窗口
+
+time_series_stationary_test:
+  rolling_period: 126       # 滚动IC窗口(约半年)
+  periods: [1, 5, 20]       # ACF的滞后阶
+
+backtest:
+  part: 5                   # 分位组数(5 = 五分组)
+
+transaction_cost:
+  cost_per_trade: 0.001     # 单边费率(按实际换手计费)
+
+carhart_attribution:
+  maxlags: 20               # HAC标准误的最大滞后

@@ -11,7 +11,7 @@
 import pandas as pd
 import pytest
 
-from quantfactor.datareader import MembershipTableSource, StaticUniverse
+from quantmine.datareader import MembershipTableSource, StaticUniverse
 
 
 @pytest.fixture

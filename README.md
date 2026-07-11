@@ -1,13 +1,76 @@
-# Quant Factor Mining
+# quantmine
 
-An end-to-end equity factor research pipeline on the S&P 500, built around one
-principle: **statistical honesty**. Every step that commonly inflates backtest
-results — survivorship bias, overlapping-return autocorrelation, multiple
-testing, look-ahead in orthogonalization, unrealistic transaction costs — is
-explicitly addressed, and the final conclusions are reported with their
-uncertainty, not just their point estimates.
+An equity factor research library built around one principle: **statistical
+honesty**. Every step that commonly inflates backtest results — survivorship
+bias, overlapping-return autocorrelation, multiple testing, look-ahead in
+orthogonalization, unrealistic transaction costs — is explicitly addressed,
+and conclusions are reported with their uncertainty, not just their point
+estimates.
 
-## Headline result
+The repo doubles as a full S&P 500 research case study: the library
+(`quantmine/`), the daily Airflow pipeline (`pipelines/`), and the findings
+below were produced by the same code you can `pip install`.
+
+## Install
+
+```bash
+pip install quantmine          # library only
+pip install "quantmine[data]"  # + yfinance download stack
+```
+
+For development (repo checkout, Python ≥ 3.13, [uv](https://docs.astral.sh/uv/)):
+
+```bash
+uv sync
+python -m pytest test
+```
+
+## Quick start
+
+Bring your own price data — any wide DataFrame (index = trading days,
+columns = tickers) works; nothing is hard-wired to yfinance or the S&P 500:
+
+```python
+import pandas as pd
+import quantmine as qm
+
+# 1) Wrap your data (or use qm.ParquetSource / qm.YFinanceSource)
+data = qm.MarketData(close=close_df, volume=volume_df)
+
+# 2) Register a custom factor — built-in factors register automatically
+@qm.factor_register("my_reversal")
+def my_reversal(close: pd.DataFrame, tickers: list) -> pd.DataFrame:
+    return -close[tickers].pct_change(5)
+
+# 3) Compute all registered factors (dependencies resolve automatically)
+pool = qm.build_param_pool(data, day=5, halflife=10, period=20)
+failed, factors = qm.calculate_all_factors(pool)
+
+# 4) Cross-sectional IC with Newey-West t-stats and multiple-testing control
+fwd = qm.forward_return(data.close, periods=[1, 5, 20])
+cs_ic = qm.CS_Information_Correlation(factors, fwd, output_path="cs_ic.parquet")
+report = qm.multiple_testing(qm.newey_west_summary(cs_ic))
+
+# 5) Quantile backtest on a point-in-time universe, turnover-based costs
+universe = qm.MembershipTableSource(membership_df)   # or qm.StaticUniverse([...])
+results, history = qm.quantile_backtest(universe, factors, ["my_reversal"], fwd)
+daily = qm.expand_all_to_daily_returns(history, data.close)
+
+# 6) Carhart four-factor attribution of the long-short returns (daily, HAC)
+french = qm.load_french_factors("ff3_daily.csv", "momentum_daily.csv")
+model = qm.carhart_attribution(daily[("my_reversal", 20)]["long_short"], french)
+```
+
+### Extension points
+
+| Protocol / hook | Purpose | Ships with |
+|---|---|---|
+| `DataSource.load(...) -> MarketData` | plug in any price/volume source | `ParquetSource`, `CSVSource`, `ExcelSource`, `YFinanceSource` |
+| `ConstituentsSource.get_constituents(date) -> set` | point-in-time universe from any provider | `MembershipTableSource` (interval table), `StaticUniverse` |
+| `@factor_register(name)` | add factors; params injected by name, factor-on-factor dependencies resolved | 8 built-in factors |
+| `config.example.yaml` | every pipeline parameter as validated dataclasses via `qm.load_configs` | defaults documented in-file |
+
+## Headline result (S&P 500 case study)
 
 The 20-day average volume factor (`TwentyDayAvgVol`) is the only candidate
 that survives the full testing gauntlet:
@@ -56,45 +119,43 @@ point.
   membership turnover per rebalance, not on a flat 100 %-turnover assumption.
 - **Sanity checks** — factor displacement and cross-sectional shuffling tests
   confirm the backtest machinery itself is not the source of the returns.
+- **Tested** — the research chain is covered by a unit + golden-value test
+  suite (`test/`), including hand-computed backtest fixtures, determinism
+  checks, and point-in-time universe edge cases.
 
 ## Pipeline
 
 ```
 yfinance (batch download, retry, blacklist, checkpoints)
-        │  quantfactor/data_acquisition.py · pipelines/task_1.py
+        │  quantmine/data_acquisition.py · pipelines/task_1.py
         ▼
 cleaning & merge (ffill, dedup)          Airflow DAG: pipelines/DAG_pipeline.py
         │  pipelines/task_2.py
         ▼
-factor computation (8 candidates, vectorized pandas)
-        │  quantfactor/factor_mining.py · pipelines/task_3.py
+factor computation (registry-driven, vectorized pandas)
+        │  quantmine/factor_mining.py · pipelines/task_3.py
         ▼
 IC testing: cross-sectional & time-series IC, NW t, BH/Bonferroni,
-train/test split, orthogonalization        quantfactor/ic_calculator.py
+train/test split, orthogonalization        quantmine/ic_calculator.py
         ▼
 quintile backtest: PIT universe, monotonicity, turnover costs,
-displacement/shuffle sanity tests          quantfactor/back_testing.py
+displacement/shuffle sanity tests          quantmine/back_testing.py
         ▼
-Carhart 4-factor attribution (daily, HAC)  quantfactor/factor_attribution.py
+Carhart 4-factor attribution (daily, HAC)  quantmine/factor_attribution.py
 ```
 
 Repository layout:
 
 ```
-quantfactor/   research library (importable package)
-pipelines/     Airflow DAG + daily CLI tasks
-tests/         test suite (being built out, see roadmap)
+quantmine/          research library (importable package)
+pipelines/            Airflow DAG + daily CLI tasks
+test/                 pytest suite (unit + golden-value)
+config.example.yaml   all pipeline parameters, documented defaults
 ```
 
-## Setup
+## Reproducing the case study
 
-Requires Python ≥ 3.13 and [uv](https://docs.astral.sh/uv/):
-
-```bash
-uv sync
-```
-
-**Data is not included** (Yahoo Finance terms of service do not permit
+**Market data is not included** (Yahoo Finance terms of service do not permit
 redistribution). To reproduce:
 
 1. Historical S&P 500 membership: provide a CSV with `ticker`, `start_date`,
@@ -105,9 +166,9 @@ redistribution). To reproduce:
 3. Fama-French factors: download the daily FF3 and momentum CSVs from the
    [Ken French Data Library](https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html)
    into `tmp/ff3/`.
-4. Run the research chain from the repo root:
-   `python pipelines/task_3.py ...` → `python -m quantfactor.ic_calculator` →
-   `python -m quantfactor.back_testing` → `python -m quantfactor.factor_attribution`.
+4. Run the research chain: `python pipelines/task_3.py ...` for factors, then
+   the IC → backtest → attribution steps as in the quick start (or
+   `python -m quantmine.ic_calculator` for the packaged train/test workflow).
 
 For the Airflow DAG, set `QUANT_PROJECT_ROOT` and `QUANT_PYTHON_BIN` (see
 `DAG_pipeline.py` docstring) and copy `airflow.cfg.example` keys into your own
@@ -127,9 +188,10 @@ config — never commit a real `airflow.cfg`.
 ## Roadmap
 
 - [ ] Migrate storage from parquet files to PostgreSQL/DuckDB
+- [ ] REST API + MCP server exposing the research chain as agent-callable tools
+- [ ] RAG-based automated research reports (ChromaDB + LLM)
 - [ ] Extend the Airflow DAG to cover IC testing → backtest → reporting
 - [ ] Rebuild the analytics dashboard (frontend rewrite in progress)
-- [ ] RAG-based automated research reports (ChromaDB + LLM)
 - [ ] Scale the data layer (full US market) with PySpark
 - [ ] Beta-hedged long-short variant; GARCH volatility targeting
 

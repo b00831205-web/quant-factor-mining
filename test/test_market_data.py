@@ -3,7 +3,7 @@
 对应对话中确认过的设计：不用可变默认值、require按需检查。
 """
 import pytest
-from quantfactor.datareader import MarketData  # 改成你实际的模块名
+from quantmine.datareader import MarketData  # 改成你实际的模块名
 
 
 def test_marketdata_optional_fields_default_to_none():

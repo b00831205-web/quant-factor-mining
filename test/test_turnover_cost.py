@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantfactor.back_testing import (
+from quantmine.back_testing import (
     apply_transcation_cost,
     calculate_turnover,
     expand_to_daily_returns,

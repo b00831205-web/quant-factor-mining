@@ -316,7 +316,7 @@ def performance_summary(back_test_quantile:pd.DataFrame, periods:int):
         result.append(summary)
     return pd.DataFrame(result).set_index('quantile'), net_return
 
-def monotonicity_test(result_df: pd.DataFrame, n_group: int = 5)->dict:
+def monotonicity_test(result_df: pd.DataFrame, part: int = 5)->dict:
     """Test whether quantile returns are monotonically increasing.
 
     Args:
@@ -332,8 +332,8 @@ def monotonicity_test(result_df: pd.DataFrame, n_group: int = 5)->dict:
     Notes:
         Rows with missing quantile values are skipped in the daily test.
     """
-    quantile_cols = [f'Q{i}' for i in range(1,n_group+1)]
-    ranks = list(range(1, n_group+1))
+    quantile_cols = [f'Q{i}' for i in range(1,part+1)]
+    ranks = list(range(1, part+1))
     means = result_df[quantile_cols].mean()
     corr_simple, pval_simple = spearmanr(ranks, means.values)
     

@@ -44,10 +44,10 @@ class TestCSInformationCorrelationGolden:
 
     @pytest.fixture(scope="class")
     def new_ic_df(self, tmp_path_factory):
-        import quantfactor.factor_mining  # noqa: F401
-        from quantfactor.factor_register import calculate_all_factors, build_param_pool
-        from quantfactor.datareader import MarketData
-        from quantfactor.ic_calculator import forward_return, CS_Information_Correlation
+        import quantmine.factor_mining  # noqa: F401
+        from quantmine.factor_register import calculate_all_factors, build_param_pool
+        from quantmine.datareader import MarketData
+        from quantmine.ic_calculator import forward_return, CS_Information_Correlation
 
         close = pd.read_parquet(REAL_CLOSE_PATH)
         volume = pd.read_parquet(REAL_VOLUME_PATH)
