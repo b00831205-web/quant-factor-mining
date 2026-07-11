@@ -36,7 +36,7 @@ ic_calculator
 class ForwardReturnConfig:
     periods: list[int]|int = field(default_factory=  lambda: [1,5,20])
     def __post_init__(self):
-        if isinstance(self.periods, int): #类型声明接受int, 不归一化的话下面的for会对int迭代报错
+        if isinstance(self.periods, int): #the annotation accepts int; without normalization the for-loop below would fail iterating an int
             self.periods = [self.periods]
         for period in self.periods:
             if not isinstance(period, int):

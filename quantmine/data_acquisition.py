@@ -78,7 +78,7 @@ def set_blacklist(keyword: list | str, checkpoint_dir:list):
     blacklist_path = os.path.join(checkpoint_dir, "blacklist.json")
     with open(blacklist_path, "w") as f:
         json.dump(updated, f, indent=2)
-    print(f"blacklist updated: add{keyword}, total {len(keyword)}")
+    print(f"Blacklist updated: added {keyword}, total {len(keyword)}")
     
 def save_blacklist(tickers: list, checkpoint_dir:str):
     """Persist a list of tickers into the blacklist file.
@@ -152,7 +152,7 @@ def data_acquisition(tickers:list, start_date:str, end_date:str, batch_size:int,
         with open(os.path.join(task_checkpoint_dir, "failed_batches.json"), mode= "a") as f:
             failed_log = os.path.join(task_checkpoint_dir, "failed_batches.json") 
             existing_failed = set()
-            if os.path.exists(failed_log):#先读已有的记录，去重后再写
+            if os.path.exists(failed_log): #read existing records first, dedupe, then append
                 with open(failed_log) as f:
                     for line in f:
                         existing_failed.add(json.loads(line)["batch_index"])
@@ -200,8 +200,8 @@ def retry_batches(start_date: str, end_date: str, max_retries: int, checkpoint_d
         recorded there.
     """
     black_list = load_blacklist(checkpoint_dir)
-    failed_log = os.path.join(checkpoint_dir, "failed_batches.json") #读取失败日志
-    retry_log = os.path.join(checkpoint_dir, "retry_log.json") #读取重试日志
+    failed_log = os.path.join(checkpoint_dir, "failed_batches.json") #failure log
+    retry_log = os.path.join(checkpoint_dir, "retry_log.json") #retry log
     if not os.path.exists(failed_log):
         print("No failed batches need to be processed")
         return None, None
@@ -212,7 +212,7 @@ def retry_batches(start_date: str, end_date: str, max_retries: int, checkpoint_d
 
     retry_count = 1
     if os.path.exists(retry_log):
-        with open(retry_log) as f: #读取重试日志，获取上一次是第几次重试
+        with open(retry_log) as f: #read the retry log to find the last retry round number
             records = [json.loads(line) for line in f if line.strip()]
             if records:
                 retry_count = records[-1]["retry_call"] +1
@@ -278,11 +278,11 @@ def retry_batches(start_date: str, end_date: str, max_retries: int, checkpoint_d
         
         
     with open(failed_log, "w") as f:
-        for record in still_failed: #将仍失败的任务写在失败日志里
+        for record in still_failed: #rewrite the failure log with the batches that still fail
             json.dump(record, f)
             f.write("\n")
 
-    with open(retry_log, "a") as f: #将重试记录写在重试的日志里
+    with open(retry_log, "a") as f: #append this round's attempts to the retry log
         for record in retry_records:
             json.dump(record, f)
             f.write("\n")

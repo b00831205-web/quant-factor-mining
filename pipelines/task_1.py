@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  #以脚本方式执行时定位repo根目录
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  #locate the repo root when executed as a script
 
 from quantmine.data_acquisition import data_acquisition
 import argparse
@@ -36,21 +36,22 @@ if __name__ == "__main__":
     if os.path.exists(close_path):
         existing = pd.read_parquet(close_path)
         print("existing date range:", existing.index.min(), "-", existing.index.max())
-    historical_data = pd.read_csv('/mnt/e/Handout/project/project_quant/sp500/sp500_ticker_start_end.csv')
+    #membership table is not part of the repo (data licensing); override via env var
+    historical_data = pd.read_csv(os.environ.get('SP500_MEMBERSHIP_CSV', '../sp500/sp500_ticker_start_end.csv'))
     historical_data['start_date'] = pd.to_datetime(historical_data['start_date'])
     historical_data['end_date'] = pd.to_datetime(historical_data['end_date'])
 
     ANALYSIS_START = pd.Timestamp('2015-01-01')
 
-# 只保留在分析窗口内相关的股票（仍在指数 或 end_date在分析起点之后）
+    # keep only tickers relevant to the analysis window (still in the index, or exited after the start)
     relevant = historical_data[
         historical_data['end_date'].isnull() |
         (historical_data['end_date'] >= ANALYSIS_START)
     ]
     tickers = set(relevant['ticker'].unique())
-    # Yahoo Finance 格式：BRK.B → BRK-B
+    # Yahoo Finance convention: BRK.B -> BRK-B
     tickers = [t.replace('.', '-') for t in tickers]
-    tickers.append('SPY')  # 保留基准，删掉这行如果不需要
+    tickers.append('SPY')  # market benchmark; drop this line if not needed
     print(f"Loaded {len(tickers)} tickers")
 
     if os.path.exists(close_path) and os.path.exists(volume_path):

@@ -1,14 +1,18 @@
-"""quantile_backtest 的单元测试(合成数据, 手算期望值)。
+"""Unit tests for quantile_backtest (synthetic data, hand-computed expectations).
 
-这些测试把"新旧架构数值等价性验证"(对旧复合列名版逐值差=0)沉淀为
-永久回归测试: 旧实现删除后, 正确性证据仍然在。
+These tests preserve the old-vs-new architecture equivalence verification
+(element-wise diff = 0 against the legacy composite-column implementation) as a
+permanent regression suite: the correctness evidence survives even though the
+legacy implementation has been deleted.
 
-覆盖对话中实际踩过的坑:
-1. curr_date 必须在调仓循环内取值(曾写在循环外引用未定义index)
-2. 结果落库必须在 period 循环内(曾缩进错误导致每因子只留最后一个period)
-3. available_tickers 必须按 factor 列序取交集(set顺序会让并列排名的
-   分组结果不可复现)
-4. ticker_history 的结构: {'date':..., 'Q1': set,..., 'Q5': set}
+Bugs from the development history that these tests pin down:
+1. curr_date must be read inside the rebalance loop (it once sat outside the
+   loop referencing an undefined index)
+2. results must be stored inside the period loop (an indentation bug once kept
+   only the last period per factor)
+3. available_tickers must intersect in factor-column order (set iteration
+   order made tied-rank bucket boundaries drift between runs)
+4. ticker_history structure: {'date':..., 'Q1': set, ..., 'Q5': set}
 """
 import numpy as np
 import pandas as pd
@@ -29,7 +33,7 @@ def dates():
 
 @pytest.fixture
 def synthetic_factors(dates):
-    """因子值恒等于 ticker 序号: T0=0, T1=1, ... 排名完全确定, 无并列。"""
+    """Factor value equals the ticker ordinal: T0=0, T1=1, ... ranking is fully determined, no ties."""
     values = {t: float(i) for i, t in enumerate(TICKERS)}
     df = pd.DataFrame({t: [v] * N_DAYS for t, v in values.items()}, index=dates)
     return {"toy": df}
@@ -37,7 +41,7 @@ def synthetic_factors(dates):
 
 @pytest.fixture
 def synthetic_forward_returns(dates):
-    """前向收益恒等于 序号/100: 分组均值可手算。"""
+    """Forward return equals ordinal/100: group means are hand-computable."""
     df = pd.DataFrame({t: [i / 100] * N_DAYS for i, t in enumerate(TICKERS)},
                       index=dates)
     return {1: df, 5: df}
@@ -46,7 +50,7 @@ def synthetic_forward_returns(dates):
 def test_quantile_means_match_hand_computation(synthetic_factors, synthetic_forward_returns):
     result, _ = quantile_backtest(None, synthetic_factors, ["toy"], synthetic_forward_returns)
     df = result[("toy", 1)]
-    # 升序分5组, 每组2只: Q1={T0,T1}→均值0.005, Q5={T8,T9}→均值0.085
+    # ascending split into 5 groups of 2: Q1={T0,T1} -> mean 0.005, Q5={T8,T9} -> mean 0.085
     assert df["Q1"].iloc[0] == pytest.approx(0.005)
     assert df["Q3"].iloc[0] == pytest.approx(0.045)
     assert df["Q5"].iloc[0] == pytest.approx(0.085)
@@ -54,7 +58,7 @@ def test_quantile_means_match_hand_computation(synthetic_factors, synthetic_forw
 
 
 def test_all_factor_period_combinations_present(synthetic_factors, synthetic_forward_returns):
-    """曾经的缩进bug: 每个因子只留最后一个period的结果。"""
+    """Historical indentation bug: only the last period per factor was kept."""
     result, history = quantile_backtest(None, synthetic_factors, ["toy"], synthetic_forward_returns)
     assert set(result.keys()) == {("toy", 1), ("toy", 5)}
     assert set(history.keys()) == {("toy", 1), ("toy", 5)}
@@ -75,8 +79,8 @@ def test_ticker_history_structure(synthetic_factors, synthetic_forward_returns):
 
 
 def test_constituents_filtering_excludes_non_members(synthetic_factors, synthetic_forward_returns):
-    """宇宙里没有的票不能进分组(point-in-time过滤)。"""
-    universe = StaticUniverse(TICKERS[:5])  # 只允许 T0-T4
+    """Tickers outside the universe must not enter any bucket (point-in-time filtering)."""
+    universe = StaticUniverse(TICKERS[:5])  # only T0-T4 allowed
     _, history = quantile_backtest(universe, synthetic_factors, ["toy"], synthetic_forward_returns)
     snap = history[("toy", 1)][0]
     members = set().union(*(snap[f"Q{i}"] for i in range(1, 6)))
@@ -84,7 +88,7 @@ def test_constituents_filtering_excludes_non_members(synthetic_factors, syntheti
 
 
 def test_membership_dataframe_is_auto_wrapped(synthetic_factors, synthetic_forward_returns):
-    """直接传 (ticker, start_date, end_date) 表也能用(自动包装)。"""
+    """A raw (ticker, start_date, end_date) table also works (auto-wrapped)."""
     table = pd.DataFrame({
         "ticker": TICKERS[:5],
         "start_date": ["2020-01-01"] * 5,
@@ -110,7 +114,7 @@ def test_date_missing_from_forward_returns_skipped(synthetic_factors, synthetic_
 
 
 def test_deterministic_across_runs(synthetic_factors, synthetic_forward_returns):
-    """曾经的set迭代序bug: 结果随运行漂移, 不可复现。"""
+    """Historical set-iteration-order bug: results drifted between runs."""
     universe = StaticUniverse(TICKERS)
     r1, h1 = quantile_backtest(universe, synthetic_factors, ["toy"], synthetic_forward_returns)
     r2, h2 = quantile_backtest(universe, synthetic_factors, ["toy"], synthetic_forward_returns)

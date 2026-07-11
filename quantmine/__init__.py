@@ -50,7 +50,7 @@ from .factor_register import (
     calculate_all_factors,
     FACTOR_REGISTRY,
 )
-from . import factor_mining  # noqa: F401  导入即注册内置因子
+from . import factor_mining  # noqa: F401  importing registers the built-in factors
 from .ic_calculator import (
     forward_return,
     data_standarization,

@@ -2,15 +2,17 @@ from .config import CONFIG_REGISTRY
 import yaml
 
 def load_configs(yaml_path: str) -> dict:
-    """
-    读取YAML文件，返回 {config_name: Config实例} 的字典。
-    YAML里没有出现的顶层key，对应的Config类会用全部默认值创建。
+    """Load a YAML file into a ``{config_name: config_instance}`` dict.
+
+    Top-level keys missing from the YAML fall back to the config class
+    defaults. Unknown fields under a known key raise ``TypeError``; unknown
+    top-level keys are silently ignored (known limitation).
     """
     with open(yaml_path, 'r') as f:
-        raw = yaml.safe_load(f) or {}  # 如果文件是空的，safe_load返回None，用 or {} 兜底
+        raw = yaml.safe_load(f) or {}  # safe_load returns None for an empty file, so fall back to {}
 
     result = {}
     for config_name, config_class in CONFIG_REGISTRY.items():
-        kwargs = raw.get(config_name, {})  # YAML里没有这个key，就用空字典（意味着全部用默认值）
-        result[config_name] = config_class(**kwargs)  # 你来写这一行，回忆之前已经确认过的模式
+        kwargs = raw.get(config_name, {})  # key absent from YAML -> empty dict -> all defaults
+        result[config_name] = config_class(**kwargs)
     return result

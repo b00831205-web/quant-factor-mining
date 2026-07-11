@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  #以脚本方式执行时定位repo根目录
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  #locate the repo root when executed as a script
 
 from quantmine.data_acquisition import retry_batches, merge_checkpoints
 import argparse
@@ -21,7 +21,7 @@ if __name__ == "__main__":
     raw_volume_path = os.path.join(tmp_dir, "raw_volume.parquet")
 
 
-    if os.path.exists(raw_close_path): #读取上次失败的节点，以上次失败的时间点为开始日期
+    if os.path.exists(raw_close_path): #resume from the last failed checkpoint: start where the previous run stopped
         existing = pd.read_parquet(raw_close_path)
         start_date = (existing.index.max() + pd.Timedelta(days=1)).strftime("%Y-%m-%d") 
     else:

@@ -13,8 +13,8 @@ def forward_return(close:pd.DataFrame, tickers: list = None, periods: list[int] 
         periods: Holding periods in trading days. Can be a list or a single int.
 
     Returns:
-        A tuple of ``(holding_period_dataframe, periods)``. The dataframe
-        contains columns named like ``{period}DaysHoldingPeriod_TICKER``.
+        A dict mapping each holding period to a date-by-ticker dataframe of
+        forward returns.
 
     Notes:
         The return series are shifted forward, so the value at date ``t`` is the
@@ -23,36 +23,36 @@ def forward_return(close:pd.DataFrame, tickers: list = None, periods: list[int] 
     if isinstance(periods, int):
         periods = [periods]
     if periods is None:
-        periods = [1,5,20]  #将默认参数放到函数中可以防止默认变量在函数内被更改
-    if tickers is None: 
+        periods = [1,5,20]  #mutable default lives inside the function so callers can't mutate it
+    if tickers is None:
         cols = close.columns.tolist()
     else:
         cols = tickers
     forward_return = {}
     for period in periods:
-        # 整个frame一次pct_change, 替代逐列插入(逐列插入会触发DataFrame碎片化, 570*3列时极慢)
+        # one pct_change per frame instead of column-by-column inserts
+        # (per-column inserts fragment the DataFrame and are very slow at 570*3 columns)
         forward_return[period] = close[cols].pct_change(period).shift(-period)
     return forward_return
 
-def data_standarization(df:pd.DataFrame)->pd.DataFrame:
-    """Cross-sectionally standardize factor columns to the range [-1, 1].
+def data_standarization(df: dict[str, pd.DataFrame])->dict[str, pd.DataFrame]:
+    """Cross-sectionally rank-standardize each frame to the range [-1, 1].
 
     Args:
-        df: Factor dataframe with columns named as ``factor_ticker``.
+        df: Mapping of name to a date-by-ticker value dataframe.
 
     Returns:
-        A dataframe with the same shape, where each factor group is ranked by
-        row and scaled to the interval ``[-1, 1]``.
+        A mapping with the same keys, where each row is ranked across tickers
+        and scaled to the interval ``[-1, 1]``.
 
     Notes:
-        This function assumes the column naming convention is consistent and
-        uses rank-based scaling, which is less sensitive to outliers than raw
-        value normalization.
+        Rank-based scaling is less sensitive to outliers than raw value
+        normalization.
     """
     return {
         factor_name: factor_df.rank(axis = 1, pct=True)*2-1
         for factor_name, factor_df in df.items()
-    } #一次concat替代逐块列插入, 避免碎片化
+    }
 
 
 def TM_Information_correlation(factors: dict[str, pd.DataFrame], forward_returns: dict[int, pd.DataFrame], output_path: str)->pd.DataFrame:
@@ -155,7 +155,7 @@ def resample_summary(cross_section_IC: pd.DataFrame, periods:list|int)-> pd.Data
         periods = [periods]
     result = {}
     for period in periods:
-        period_df = cross_section_IC.xs(period, level = 'period', axis = 1) #xs筛选出的就是df
+        period_df = cross_section_IC.xs(period, level = 'period', axis = 1) #xs already returns a DataFrame
         summary_df = period_df.iloc[::period]
         result[f'{period}HoldingPeriodSummary']=summary(summary_df)   
     result_df = pd.concat(result.values())
@@ -185,9 +185,9 @@ def newey_west_summary(cross_section_IC: pd.DataFrame, lag_multiplier: int = 2)-
         n = len(s)
         mu = s.mean()
         e = (s - mu).values
-        var = e @ e / n #lag=0时就是普通样本方差
+        var = e @ e / n #with lag=0 this is the plain sample variance
         for l in range(1, min(lag, n - 1) + 1):
-            w = 1 - l / (lag + 1) #Bartlett核权重, 保证方差估计非负
+            w = 1 - l / (lag + 1) #Bartlett kernel weight, keeps the variance estimate non-negative
             var += 2 * w * (e[:-l] @ e[l:]) / n
         se = np.sqrt(var / n)
         rows[col] = {'IC_mean': mu, 'IC_std': s.std(), 'IR': mu / s.std(),
@@ -212,12 +212,12 @@ def multiple_testing(summary_df:pd.DataFrame)->pd.DataFrame:
         If ``NW_t`` exists, the function uses the Newey-West corrected path.
         Otherwise it falls back to the IID resampled path.
     """
-    if 'NW_t' in summary_df.columns: #NW路径: 用自相关修正后的t和p(newey_west_summary的输出)
+    if 'NW_t' in summary_df.columns: #NW path: autocorrelation-corrected t and p (output of newey_west_summary)
         significant_t = pd.DataFrame({
             "t": summary_df['NW_t'],
             "p_value": summary_df['p_value']
             })
-    else: #iid路径: 抽样降频后的独立样本t检验(resample_summary的输出)
+    else: #IID path: independent-sample t-test on down-sampled ICs (output of resample_summary)
         significant_t = pd.DataFrame({
             "t":summary_df["IR"]*np.sqrt(summary_df["n"]),
             "p_value":stats.t.sf(x=abs(summary_df["IR"]*np.sqrt(summary_df["n"])), df=summary_df['n']-1)*2
@@ -243,21 +243,26 @@ def orthogonal_analysis(factors: dict[str, pd.DataFrame]):
         average correlation exceeds 0.5 are treated as highly correlated.
     """
     factor = sorted(factors.keys())
-    ticker = sorted(set().union(*[tickers.columns.tolist() for tickers in factors.values()])) #*是“解包”操作，把列表拆成多个独立参数传给union
+    ticker = sorted(set().union(*[tickers.columns.tolist() for tickers in factors.values()])) #* unpacks the list into separate arguments for union
 
-    #每个因子重排成一张 dates*tickers 的宽表, 列顺序统一, 后续全部是frame级向量化操作
+    #reshape each factor into one dates*tickers wide frame with a unified column order,
+    #so everything below is frame-level vectorized work
     frames = { f: factors[f].reindex(columns = ticker) for f in factor}
 
-    #有效日: 每个因子当天至少有一个非NaN值(与原逐日实现的跳过条件一致)
-    valid = pd.concat({f: frames[f].notna().any(axis=1) for f in factors}, axis=1).all(axis=1)
+    #valid day: every factor has at least one non-NaN value that day
+    #(same skip condition as the original day-by-day implementation)
+    valid = pd.concat({f: frames[f].notna().any(axis=1) for f in factor}, axis=1).all(axis=1)
     valid_days = int(valid.sum())
 
-    avg_corr = pd.DataFrame(1.0, index=factors, columns=factors) #对角线恒为1
-    for i, fa in enumerate(factors):
+    avg_corr = pd.DataFrame(1.0, index=factor, columns=factor) #diagonal is always 1
+    #iterate the same sorted list on both sides: mixing dict insertion order with
+    #the sorted list would mispair factors (some pairs skipped, diagonal corrupted)
+    for i, fa in enumerate(factor):
         a = frames[fa]
         for fb in factor[i+1:]:
             b = frames[fb]
-            #逐日截面Pearson相关的向量化展开: 每天在两因子共同非NaN的ticker上算相关
+            #vectorized expansion of daily cross-sectional Pearson correlation:
+            #each day, correlate over tickers where both factors are non-NaN
             mask = a.notna() & b.notna()
             xa, xb = a.where(mask), b.where(mask)
             n = mask.sum(axis=1)
@@ -266,7 +271,8 @@ def orthogonal_analysis(factors: dict[str, pd.DataFrame]):
             var_a = (xa*xa).sum(axis=1) - sa*sa/n
             var_b = (xb*xb).sum(axis=1) - sb*sb/n
             corr_t = cov/np.sqrt(var_a*var_b)
-            #与原实现一致: 对有效日求和(若某日相关无法计算则整体为NaN)后除以有效日数
+            #matches the original implementation: sum over valid days (NaN if any day's
+            #correlation is undefined) and divide by the number of valid days
             pair_avg = corr_t[valid].to_numpy().sum()/valid_days
             avg_corr.loc[fa, fb] = pair_avg
             avg_corr.loc[fb, fa] = pair_avg
@@ -316,7 +322,7 @@ def orthogonalize(factors: dict[str, pd.DataFrame], high_corr_dict: dict, ic_sum
     for factor_a, factor_b in pairs:
         if factor_a in drop or factor_b in drop:
             continue
-        ir_a = factor_ir.get(factor_a, 0) #pd.Series有get操作，但不是字典
+        ir_a = factor_ir.get(factor_a, 0) #pd.Series supports .get like a dict
         ir_b = factor_ir.get(factor_b, 0)
 
         if ir_a < threshold and ir_b < threshold:
@@ -380,13 +386,13 @@ def time_series_stationary_test(CS_IC_matrix:pd.DataFrame, rolling_period:int =1
         rolling_window_IC[col]=CS_IC_matrix[col].rolling(rolling_period).mean()
     rolling_ic_df = pd.DataFrame(rolling_window_IC, index = CS_IC_matrix.index)
 
-    for col in CS_IC_matrix.columns:        
+    for col in CS_IC_matrix.columns:
         for period in periods:
                 # acf_ic
-                acf_ic[(col,period)] = CS_IC_matrix[col].corr(CS_IC_matrix[col].shift(period), method="pearson") #corr是对series, corrwith是对dataframe
-    acf_df = pd.Series(acf_ic).to_frame(name = 'ACF') #字典的每个value是一个标量，不能直接用pd.DataFrame，需要先转成Series
+                acf_ic[(col,period)] = CS_IC_matrix[col].corr(CS_IC_matrix[col].shift(period), method="pearson") #corr is for Series, corrwith is for DataFrame
+    acf_df = pd.Series(acf_ic).to_frame(name = 'ACF') #dict values are scalars, so convert to a Series before building the frame
     yearly_summary={}
-    # 分段IC    
+    # yearly IC
     for year, group in CS_IC_matrix.groupby(CS_IC_matrix.index.year):
         yearly_summary[year] = summary(group)
     yearly_df = pd.concat(yearly_summary, axis= 0)
@@ -409,14 +415,14 @@ def get_constitunents_at_date(historical_df: pd.DataFrame, date: pd.Timestamp)->
         as open-ended membership.
     """
     mask = (historical_df['start_date'] <= date) & (historical_df['end_date'].isnull() | (historical_df['end_date'] >= date))
-    return set(historical_df.loc[mask, 'ticker'].str.replace('.','-',regax = False))
+    return set(historical_df.loc[mask, 'ticker'].str.replace('.','-',regex = False))
 
 def train_test_analysis(cs_df: pd.DataFrame, factors: dict[str, pd.DataFrame], close: pd.DataFrame , train_end: str, test_start: str, periods: list|int = None):
     """Run the full train/test IC workflow and orthogonalization pipeline.
 
     Args:
         cs_df: Cross-sectional IC dataframe for all available dates.
-        factor_ticker: Full factor dataframe with ``factor_ticker`` columns.
+        factors: Mapping of factor name to a date-by-ticker value dataframe.
         close: Close price dataframe used to generate holding-period returns.
         train_end: Last date included in the training sample.
         test_start: First date included in the test sample.
@@ -461,14 +467,14 @@ def train_test_analysis(cs_df: pd.DataFrame, factors: dict[str, pd.DataFrame], c
     cs_df_orth_train = CS_Information_Correlation(factors = orth_train,
                                                   forward_returns=forward_return_train_stand,
                                                   output_path = 'tmp/ic_test/cs_df_orth_train.parquet')
-    #主检验: Newey-West(全日频IC, 修正重叠持有期自相关)
+    #primary test: Newey-West on full daily ICs, correcting overlapping-holding-period autocorrelation
     nw_summary_orth_train = newey_west_summary(cs_df_orth_train)
     multiple_testing_train = multiple_testing(nw_summary_orth_train)
     print("=== Newey-West test ===")
     print(multiple_testing_train)
     print("Number of True values in BH_significant:", multiple_testing_train['BH_significant'].sum())
 
-    #稳健性对照: 抽样降频(iloc[::period], 保守但有相位依赖)
+    #robustness control: down-sampling (iloc[::period], conservative but phase-dependent)
     resample_summary_orth_train = resample_summary(cs_df_orth_train, periods)
     multiple_testing_resample = multiple_testing(resample_summary_orth_train)
     print("=== Down-sampling control ===")
@@ -510,34 +516,30 @@ def train_test_analysis(cs_df: pd.DataFrame, factors: dict[str, pd.DataFrame], c
     
 
 if __name__=='__main__':
-    
+    #Packaged train/test research workflow. Expects the processed parquet files
+    #described in the README; run from the repo root as:
+    #    python -m quantmine.ic_calculator
+    from .datareader import MarketData
+    from .factor_register import build_param_pool, calculate_all_factors
+    from . import factor_mining  # noqa: F401  importing registers the built-in factors
+
     pd.set_option('display.max_rows', None)
     pd.set_option('display.max_columns', None)
     pd.set_option('display.width', None)
-    
-    close_data=pd.read_parquet("data/processed/processed_close.parquet")
-    factor_data=pd.read_parquet("tmp/factors/factors.parquet")
-    
-    ticker_list=close_data.columns
-    periods=[1,5,20]
 
-    different_holding_period_df , _  = different_holding_period(close=close_data, tickers = close_data.columns.tolist(), periods=periods)
-    # #原始因子算IC，用于正交化
-    cs_df = CS_Information_Correlation(factors=factor_data, different_holding_period=different_holding_period_df, output_path="tmp/ic_test/cs_df.parquet")
+    close_data = pd.read_parquet("data/processed/processed_close.parquet")
+    volume_data = pd.read_parquet("data/processed/processed_volume.parquet")
+    os.makedirs("tmp/ic_test", exist_ok=True)
 
-    train_end = '2023-12-31'
-    test_start = '2024-01-01'
+    data = MarketData(close=close_data, volume=volume_data)
+    pool = build_param_pool(data, day=5, halflife=10, period=20)
+    failed, factors = calculate_all_factors(pool)
 
-    train_test_analysis_result = train_test_analysis(cs_df= cs_df, factor_ticker=factor_data ,close = close_data, train_end=train_end, test_start= test_start)
+    forward_returns = forward_return(close_data, periods=[1, 5, 20])
+    cs_df = CS_Information_Correlation(factors=factors, forward_returns=forward_returns,
+                                       output_path="tmp/ic_test/cs_df.parquet")
 
-    # with pd.ExcelWriter('tmp/ic_test/stationary.xlsx') as w:
-    #     train_test_analysis_result['rolling_ic_train'].to_excel(w, sheet_name="rolling_ic")
-    #     train_test_analysis_result['acf_train'].to_excel(w,sheet_name="acf")
-    #     train_test_analysis_result['yearly_train'].to_excel(w, sheet_name = "yearly")
-    
-    # train_test_analysis_result['multiple_testing_train'].to_parquet('tmp/ic_test/significant_test.parquet')
-    # print("Done !!!")
-    # resample_summary_train = resample_summary(train_cs_df, periods)
-    # print(resample_summary_train.index.tolist()[:5])
-
-    
+    #one-month embargo between train_end and test_start keeps overlapping
+    #forward returns from leaking across the split
+    train_test_analysis_result = train_test_analysis(cs_df=cs_df, factors=factors, close=close_data,
+                                                     train_end='2023-12-31', test_start='2024-02-01')

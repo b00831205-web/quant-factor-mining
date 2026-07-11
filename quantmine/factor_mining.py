@@ -57,26 +57,6 @@ def momentum(close: pd.DataFrame, tickers: list, day:int =2) -> pd.DataFrame:
     cols = [t for t in tickers if t in close.columns]
     mmt = close[cols].pct_change(day - 1)
     return mmt
- 
-# def EWMA(window_data, wk: float)->float: #做.apply()时由于切分下来的nparray会直接传入第一个参数，因此要把window_data写在最前面
-#     """Compute an exponential weighted moving average over a window.
-
-#     Args:
-#         window_data: One-dimensional numpy array passed by ``rolling.apply``.
-#         wk: Exponential decay factor.
-
-#     Returns:
-#         The weighted sum for the supplied window.
-
-#     Notes:
-#         The function is designed for use with ``Series.rolling(...).apply(...)``
-#         and expects the newest observation to contribute the most weight.
-#     """
-#     ewma=0
-#     period = len(window_data)
-#     for i in range(period):
-#         ewma += wk**(i)*window_data[period-i-1]
-#     return ewma
 
 @factor_register('ShortTermReversal')
 def ShortTermReversal(excess_return: pd.DataFrame,tickers: list, halflife: int, period: int)->pd.DataFrame:
@@ -98,32 +78,17 @@ def ShortTermReversal(excess_return: pd.DataFrame,tickers: list, halflife: int, 
     cols = [t for t in tickers if t in excess_return.columns]
     data = excess_return[cols]
     wk = 0.5 ** (1 / halflife)
-    # 固定权重FIR滤波: sum_i wk^i * x.shift(i), 每个lag对整个frame做一次shift,
-    # 等价于rolling(period).apply(EWMA)但避免了逐窗口的Python循环
-    # (O(dates*tickers*period)次Python调用 -> period次向量化操作)。
-    # NaN语义一致: 窗口内任一观测缺失则结果为NaN。
+    # fixed-weight FIR filter: sum_i wk^i * x.shift(i), one whole-frame shift per lag.
+    # Equivalent to rolling(period).apply(EWMA) but avoids the per-window Python loop
+    # (O(dates*tickers*period) Python calls -> period vectorized operations).
+    # NaN semantics match: any missing observation inside the window yields NaN.
     ewma = data * 1.0
     for i in range(1, period):
         ewma = ewma + (wk ** i) * data.shift(i)
-    return -ewma #反转因子信号是负的——过去收益率高，预期未来会回落
-
-'''
-def get_short_term_reversal_ewma(excess_return, ticker, period, halflife):
-    if ticker not in excess_return.columns:
-        return None
-    
-    price = excess_return[ticker]
-    
-    def ewma_func(window):
-        weights = np.array([0.5**(1/halflife) ** (len(window) - 1 - i) for i in range(len(window))])
-        weights /= weights.sum() #做权重归一化，不做归一化计算出来的EWMA值会受窗口期长短影响——窗口越长，权重之和越大，算出来的值越大，不同窗口期的值没有可比性
-        return -np.dot(weights, window)
-    
-    return price.rolling(period).apply(ewma_func, raw=True)
-    '''
+    return -ewma #reversal signal is negated: high past returns imply lower expected near-term returns
 
 @factor_register('TwentyDayVolatility')
-def TwentyDayVolatility(daily_return:pd.DataFrame, tickers:list)->pd.DataFrame: #获取20日波动率
+def TwentyDayVolatility(daily_return:pd.DataFrame, tickers:list)->pd.DataFrame:
     """Compute 20-day rolling volatility for each ticker.
 
     Args:
@@ -138,7 +103,7 @@ def TwentyDayVolatility(daily_return:pd.DataFrame, tickers:list)->pd.DataFrame: 
     return twenty_day_volatility
 
 @factor_register('TwentyDayNegVotality')
-def TwentyDayNegVotality(daily_return:pd.DataFrame, tickers:list)->pd.DataFrame: #获取20日负收益波动率
+def TwentyDayNegVotality(daily_return:pd.DataFrame, tickers:list)->pd.DataFrame:
     """Compute 20-day rolling volatility using only negative returns.
 
     Args:
@@ -153,11 +118,11 @@ def TwentyDayNegVotality(daily_return:pd.DataFrame, tickers:list)->pd.DataFrame:
         Non-negative returns are converted to ``NaN`` before rolling.
     """
     cols = [t for t in tickers if t in daily_return.columns]
-    neg_return = daily_return[cols].where(daily_return[cols] < 0) #满足cond的保留，不满足的变成NaN
+    neg_return = daily_return[cols].where(daily_return[cols] < 0) #where keeps values matching the condition, others become NaN
     return neg_return.rolling(window=20, min_periods=1).std()
 
 @factor_register('TwentyDayAvgVol')
-def TwentyDayAvgVol(volume:pd.DataFrame, tickers:list)->pd.DataFrame: #20日平均成交量因子
+def TwentyDayAvgVol(volume:pd.DataFrame, tickers:list)->pd.DataFrame:
     """Compute 20-day average trading volume for each ticker.
 
     Args:
@@ -172,7 +137,7 @@ def TwentyDayAvgVol(volume:pd.DataFrame, tickers:list)->pd.DataFrame: #20日平�
     return volume_avg
 
 @factor_register('VolPriceCorr')
-def VolPriceCorr(volume:pd.DataFrame, daily_return:pd.DataFrame, tickers:list)->pd.DataFrame: #20日量价相关系数
+def VolPriceCorr(volume:pd.DataFrame, daily_return:pd.DataFrame, tickers:list)->pd.DataFrame:
     """Compute 20-day rolling correlation between returns and volume.
 
     Args:

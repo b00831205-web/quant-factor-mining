@@ -1,9 +1,8 @@
-"""
-黄金值回归测试：完整链路(因子计算 -> forward_returns -> CS_IC)
-和旧的 CS_IC.parquet 数值对比。
+"""Golden-value regression test: the full chain (factor computation ->
+forward_returns -> CS_IC) compared against the legacy CS_IC.parquet.
 
-对话中最终确认：用 Pearson method + momentum day=5，
-新旧数值逐项完全一致(差异在1e-16量级的浮点精度极限)。
+Final confirmed setup: Pearson method + momentum day=5 reproduces the legacy
+values element-wise (differences at the 1e-16 floating-point limit).
 """
 import pandas as pd
 import pytest
@@ -13,7 +12,7 @@ from conftest import (
     REAL_CLOSE_PATH, REAL_VOLUME_PATH, OLD_CS_IC_PATH,
 )
 
-TOLERANCE = 1e-6  # IC是相关系数，容忍度比因子原始值稍宽松一点
+TOLERANCE = 1e-6  # ICs are correlations, slightly looser than raw factor values
 MOMENTUM_DAY = 5
 
 NAME_MAPPING = {
@@ -70,7 +69,7 @@ class TestCSInformationCorrelationGolden:
     @pytest.mark.parametrize("period", [1, 5, 20])
     def test_ic_matches_old_value(self, factor_name, period, new_ic_df, old_ic_df):
         old_col = _find_old_column(old_ic_df, factor_name, period)
-        assert old_col is not None, f"旧数据里找不到 {factor_name}, period={period} 对应的列"
+        assert old_col is not None, f"no legacy column for {factor_name}, period={period}"
 
         old_series = old_ic_df[old_col]
         new_series = new_ic_df[(factor_name, period)]
@@ -79,4 +78,4 @@ class TestCSInformationCorrelationGolden:
         diff = (old_series.loc[common_dates] - new_series.loc[common_dates]).abs()
         max_diff = diff.max()
 
-        assert max_diff < TOLERANCE, f"{factor_name}, period={period} 最大差异 {max_diff} 超出容忍范围"
+        assert max_diff < TOLERANCE, f"{factor_name}, period={period} max diff {max_diff} exceeds tolerance"

@@ -11,13 +11,13 @@ if __name__ == "__main__":
 
     tmp_dir = os.path.join(os.getcwd(), "data/processed")
 
-    # 定义一个处理函数，避免 close/volume 重复写两遍
+    # one shared routine so the close/volume handling isn't written twice
     def process(raw_name, final_name):
         raw_path = os.path.join(tmp_dir, raw_name)
         final_path = os.path.join(tmp_dir, final_name)
 
         if not os.path.exists(raw_path):
-            print(f"[{args.batch}] {raw_name} 无新数据，跳过")
+            print(f"[{args.batch}] {raw_name} has no new data, skipping")
             return
 
         new_data = pd.read_parquet(raw_path)
@@ -38,8 +38,8 @@ if __name__ == "__main__":
 
         combined.to_parquet(final_path)
         os.remove(raw_path)
-        print(f"[{args.batch}] {final_name} 合并完成")
+        print(f"[{args.batch}] {final_name} merge complete")
 
-    # 分别处理 close 和 volume
+    # process close and volume separately
     process("close.parquet", "processed_close.parquet")
     process("volume.parquet", "processed_volume.parquet")

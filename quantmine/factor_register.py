@@ -7,7 +7,7 @@ FACTOR_REGISTRY={}
 def factor_register(name:str):
     def decorate(func):
         if name in FACTOR_REGISTRY:
-            raise ValueError(f'{name} has already sign in, can not be registered again')
+            raise ValueError(f"factor '{name}' is already registered")
         FACTOR_REGISTRY[name] = func
         return func
     return decorate
@@ -21,7 +21,7 @@ def call_single_factors(func, param_pool: dict):
         elif param.default is not inspect.Parameter.empty:
             kwargs[name] = param.default
         else:
-            raise KeyError(f"loss value for '{name}'")
+            raise KeyError(f"missing value for '{name}'")
     return func(**kwargs)
 
 def calculate_all_factors(param_pool: dict)-> dict:
@@ -50,9 +50,10 @@ def try_loop(failure: dict, result: dict, param_pool:dict):
             except KeyError:
                 continue
         if len(pending) == length:
-            #一整轮无进展说明剩余因子的依赖永远无法满足:
-            #全部标记失败后必须退出while, 否则死循环
-            #(旧写法只标记第一个且break不出while, 下一轮None混入param_pool会引发未捕获的TypeError)
+            #a full round with no progress means the remaining factors' dependencies
+            #can never be satisfied: mark them all failed and exit the while loop,
+            #otherwise this loops forever (marking only the first one and staying in
+            #the loop leaks None into param_pool and raises an uncaught TypeError)
             for factor_name in pending:
                 completed[factor_name] = None
                 print(f"factor {factor_name} failed: unresolved dependencies")

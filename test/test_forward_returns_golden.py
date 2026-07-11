@@ -1,11 +1,14 @@
-"""forward_return 的正确性契约测试。
+"""Correctness contract tests for forward_return.
 
-历史note: 这里原本是对旧存档 different_holding_period.parquet 的黄金值对比,
-但该存档是2026-07-01用幸存者偏差修复前的旧close(2021起/504只)生成的,
-2026-07-04起 processed_close 换成了幸存者修复后的重下数据(2015起/570只),
-黄金锚的数据来源已失效(最大差~0.01来自数据本身, 不是函数)。
-故改为自包含的数学契约: forward_return[p][t] 必须等于 t 日买入、
-持有p个交易日的收益, 用手造价格序列逐值验证, 不依赖任何存档文件。
+History note: this file used to be a golden-value comparison against an
+archived different_holding_period.parquet. That archive was generated on
+2026-07-01 from the pre-survivorship-fix close data (2021+, 504 tickers); on
+2026-07-04 processed_close was rebuilt from re-downloaded survivorship-fixed
+data (2015+, 570 tickers), so the golden anchor's data provenance became
+invalid (the ~0.01 max diff came from the data itself, not the function).
+It is now a self-contained mathematical contract: forward_return[p][t] must
+equal the return of buying at t and holding for p trading days, verified
+value-by-value on hand-made price series with no archive dependency.
 """
 import numpy as np
 import pandas as pd
@@ -19,7 +22,7 @@ TOLERANCE = 1e-12
 
 @pytest.fixture
 def hand_made_close():
-    """价格=1,2,4,8,...(每天翻倍): 任意持有期收益都可精确手算。"""
+    """Prices 1, 2, 4, 8, ... (doubling daily): any holding-period return is exactly hand-computable."""
     dates = pd.date_range("2024-01-01", periods=8, freq="B")
     return pd.DataFrame({"A": 2.0 ** np.arange(8),
                          "B": 3.0 ** np.arange(8)}, index=dates)
@@ -27,14 +30,14 @@ def hand_made_close():
 
 def test_value_is_forward_looking_holding_return(hand_made_close):
     fwd = forward_return(hand_made_close, periods=[1, 3])
-    # t日的值 = 未来p日的收益: 翻倍序列 p=1 -> 1.0, p=3 -> 7.0
+    # value at t = return over the next p days: doubling series gives p=1 -> 1.0, p=3 -> 7.0
     assert fwd[1]["A"].iloc[0] == pytest.approx(1.0, abs=TOLERANCE)
     assert fwd[3]["A"].iloc[0] == pytest.approx(7.0, abs=TOLERANCE)
-    assert fwd[3]["B"].iloc[0] == pytest.approx(26.0, abs=TOLERANCE)  # 3^3-1
+    assert fwd[3]["B"].iloc[0] == pytest.approx(26.0, abs=TOLERANCE)  # 3^3 - 1
 
 
 def test_tail_rows_are_nan(hand_made_close):
-    """最后p行没有未来数据, 必须是NaN(否则就是前视泄漏)。"""
+    """The last p rows have no future data and must be NaN (anything else is look-ahead leakage)."""
     fwd = forward_return(hand_made_close, periods=[3])
     assert fwd[3]["A"].iloc[-3:].isna().all()
     assert fwd[3]["A"].iloc[:-3].notna().all()
@@ -59,7 +62,7 @@ def test_tickers_subset_selection(hand_made_close):
 
 @requires_real_data
 def test_identity_holds_on_real_close():
-    """真实数据上的同源一致性(同一份close, 函数输出 vs 手算)。"""
+    """Same-source consistency on real data (one close file: function output vs manual)."""
     close = pd.read_parquet(REAL_CLOSE_PATH)
     fwd = forward_return(close, periods=[20])
     expected = close.pct_change(20).shift(-20)

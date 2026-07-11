@@ -1,20 +1,22 @@
-"""
-测试因子注册机制和 call_single_factors 的参数解析逻辑。
+"""Tests for the factor registry and call_single_factors parameter resolution.
 
-这个文件专门覆盖对话中实际踩过的坑：
-1. call_single_factors 应该优先用 param_pool 里的值，
-   函数自身默认值只在 param_pool 没提供时才作为兜底
-   （之前 if/if 写错成非互斥分支，导致默认值覆盖了显式传入的值）
-2. 缺少必需参数（无默认值、param_pool也没提供）应该抛出
-   能被 calculate_all_factors 正确捕获的异常类型
+This file pins down pitfalls actually hit during development:
+1. call_single_factors must prefer values from param_pool; the function's own
+   defaults are only a fallback when the pool provides nothing (an earlier
+   non-exclusive if/if branch let defaults override explicitly passed values)
+2. a missing required parameter (no default, not in the pool) must raise the
+   exception type that calculate_all_factors catches (KeyError)
 """
-import inspect
 import pytest
 
+# import the real implementation: an earlier version kept a local copy of the
+# "intended semantics" here -- tests were green while the real code in
+# factor_register.py still lacked the fix. The function under test must be imported.
+from quantmine.factor_register import call_single_factors as call_single_factor
 
-# 用完全独立的、和真实项目无关的 dummy 注册表做测试，
-# 避免这些单元测试依赖真实的 factor_mining.py 内容，
-# 保持测试的独立性和运行速度
+
+# a fully self-contained dummy registry, independent of the real
+# factor_mining.py content, keeps these unit tests isolated and fast
 @pytest.fixture
 def dummy_registry():
     registry = {}
@@ -29,7 +31,7 @@ def dummy_registry():
         return base_value * 2
     register("A")(factor_a)
 
-    def factor_b(A: int) -> int:  # 依赖因子A的结果
+    def factor_b(A: int) -> int:  # depends on factor A's result
         return A + 10
     register("B")(factor_b)
 
@@ -40,37 +42,33 @@ def dummy_registry():
     return registry
 
 
-# 直接import真实实现: 之前这里放的是"期望语义"的本地复制版,
-# 测试绿了但factor_register.py里的真代码并没有这个修复——教训是被测函数必须import
-from quantmine.factor_register import call_single_factors as call_single_factor
-
-
 def test_param_pool_value_takes_priority_over_default(dummy_registry):
-    """param_pool显式提供的值，应该覆盖函数自身的默认值。"""
+    """A value explicitly provided in param_pool must override the function default."""
     func = dummy_registry["with_default"]
     result = call_single_factor(func, {"base_value": 1, "day": 20})
-    assert result == 21  # 1 + 20，用的是param_pool的20，不是默认值5
+    assert result == 21  # 1 + 20: uses the pool's 20, not the default 5
 
 
 def test_falls_back_to_function_default_when_not_in_pool(dummy_registry):
-    """param_pool没提供day，应该用函数自身声明的默认值5，不应该报错。"""
+    """With day absent from the pool, the function's declared default (5) applies without error."""
     func = dummy_registry["with_default"]
     result = call_single_factor(func, {"base_value": 1})
-    assert result == 6  # 1 + 5(默认值)
+    assert result == 6  # 1 + 5 (default)
 
 
 def test_missing_required_param_raises_keyerror(dummy_registry):
-    """必需参数(无默认值)缺失时，应该抛出KeyError，
-    这样才能被calculate_all_factors/try_loop的except KeyError正确捕获。
+    """A missing required parameter (no default) must raise KeyError so that
+    calculate_all_factors / try_loop's `except KeyError` catches it correctly.
     """
-    func = dummy_registry["B"]  # 需要参数A，既不在param_pool也没有默认值
+    func = dummy_registry["B"]  # needs A, which is neither in the pool nor defaulted
     with pytest.raises(KeyError):
         call_single_factor(func, {})
 
 
 def test_dependency_chain_resolves_across_retry_rounds(dummy_registry):
-    """模拟真实的 calculate_all_factors + try_loop 依赖重试逻辑：
-    B依赖A的结果，第一轮A成功、B失败，重试后B应该成功。
+    """Simulates the real calculate_all_factors + try_loop retry logic:
+    B depends on A's result; round one computes A and fails B, the retry
+    round must then succeed for B.
     """
     param_pool = {"base_value": 5}
     completed = {}
@@ -78,7 +76,7 @@ def test_dependency_chain_resolves_across_retry_rounds(dummy_registry):
 
     for name, func in dummy_registry.items():
         if name == "with_default":
-            continue  # 这个用例不测这个因子
+            continue  # not exercised by this case
         try:
             completed[name] = call_single_factor(func, param_pool)
         except KeyError:
@@ -86,9 +84,9 @@ def test_dependency_chain_resolves_across_retry_rounds(dummy_registry):
 
     assert "A" in completed
     assert completed["A"] == 10
-    assert "B" in failures  # 第一轮B应该失败，因为A的结果还没进completed
+    assert "B" in failures  # B must fail in round one: A's result is not in completed yet
 
-    # 模拟重试：把completed合并进param_pool再试一次
+    # simulate the retry: merge completed into the pool and try again
     for name in list(failures.keys()):
         try:
             current_params = {**param_pool, **completed}

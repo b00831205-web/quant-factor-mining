@@ -1,23 +1,21 @@
-"""
-共享 fixture。真实数据/旧文件路径集中写在这里，
-以后路径变了只改这一处。
+"""Shared fixtures. Real-data / legacy-file paths are centralized here so a
+path change only ever touches this file.
 """
 import os
+import sys
+
 import numpy as np
 import pandas as pd
 import pytest
-import sys
-import os
 
-#两条路径都要: 包内有 "import Datareader" 的裸模块导入,
-#也有 "from quantmine.ic_calculator import ..." 的包路径导入
+#repo root on sys.path for "from quantmine.X import ..." package imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "quantmine"))
 
 # ============================================================
-# 真实数据路径 —— 按你的实际项目结构调整这几行
+# Real data paths -- adjust these to your local project layout
 # ============================================================
-#锚定到repo根目录: 相对路径会随pytest的调用目录变化, 导致真实数据测试被静默跳过
+#anchored to the repo root: relative paths change with pytest's invocation
+#directory and would silently skip the real-data tests
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 REAL_CLOSE_PATH = os.path.join(_REPO_ROOT, "data/processed/processed_close.parquet")
 REAL_VOLUME_PATH = os.path.join(_REPO_ROOT, "data/processed/processed_volume.parquet")
@@ -30,23 +28,23 @@ OLD_FACTORS_AVAILABLE = os.path.exists(OLD_FACTORS_PATH)
 OLD_DHP_AVAILABLE = os.path.exists(OLD_DHP_PATH)
 OLD_CS_IC_AVAILABLE = os.path.exists(OLD_CS_IC_PATH)
 
-# 用这个装饰器标记"需要真实旧数据才能跑"的测试，本地没有文件时自动跳过而不是报错
+# mark tests that need real legacy data: absent files skip instead of failing
 requires_real_data = pytest.mark.skipif(
-    not REAL_DATA_AVAILABLE, reason="本地找不到真实 close/volume parquet，跳过"
+    not REAL_DATA_AVAILABLE, reason="real close/volume parquet not found locally, skipping"
 )
 requires_old_factors = pytest.mark.skipif(
-    not OLD_FACTORS_AVAILABLE, reason="本地找不到旧 factors.parquet，跳过黄金值对比"
+    not OLD_FACTORS_AVAILABLE, reason="legacy factors.parquet not found, skipping golden comparison"
 )
 requires_old_dhp = pytest.mark.skipif(
-    not OLD_DHP_AVAILABLE, reason="本地找不到旧 different_holding_period.parquet，跳过"
+    not OLD_DHP_AVAILABLE, reason="legacy different_holding_period.parquet not found, skipping"
 )
 requires_old_cs_ic = pytest.mark.skipif(
-    not OLD_CS_IC_AVAILABLE, reason="本地找不到旧 CS_IC.parquet，跳过"
+    not OLD_CS_IC_AVAILABLE, reason="legacy CS_IC.parquet not found, skipping"
 )
 
 
 # ============================================================
-# Dummy 数据 fixture —— 单元测试用，不依赖任何真实文件，跑得快
+# Dummy-data fixtures -- fast unit tests, no real files required
 # ============================================================
 @pytest.fixture
 def dummy_close():
@@ -73,17 +71,17 @@ def dummy_tickers(dummy_close):
 
 
 # ============================================================
-# 真实数据 fixture —— 黄金值测试用
+# Real-data fixtures -- for golden-value tests
 # ============================================================
 @pytest.fixture(scope="session")
 def real_close():
     if not REAL_DATA_AVAILABLE:
-        pytest.skip("真实close数据不存在")
+        pytest.skip("real close data not available")
     return pd.read_parquet(REAL_CLOSE_PATH)
 
 
 @pytest.fixture(scope="session")
 def real_volume():
     if not REAL_DATA_AVAILABLE:
-        pytest.skip("真实volume数据不存在")
+        pytest.skip("real volume data not available")
     return pd.read_parquet(REAL_VOLUME_PATH)

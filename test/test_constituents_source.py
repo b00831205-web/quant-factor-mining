@@ -1,12 +1,13 @@
-"""ConstituentsSource 协议及其实现的单元测试。
+"""Unit tests for the ConstituentsSource protocol and its implementations.
 
-覆盖对话中踩过/发现的坑:
-1. end_date 为空 = 至今在指数内(开区间语义)
-2. 边界日期是闭区间(加入日/退出日当天算在内)
-3. ticker 归一化: 成分股表里的 BRK.B 要能匹配行情列名 BRK-B,
-   否则这些票被静默排除出宇宙
-4. 日期解析只在构造时做一次 + 查询缓存(旧的 get_constitunents_at_date
-   每个调仓日都对全表跑 pd.to_datetime)
+Pitfalls covered (all encountered during development):
+1. empty end_date = still a member today (open-ended semantics)
+2. boundary dates are inclusive (join/exit day counts as a member day)
+3. ticker normalization: BRK.B in the membership table must match the price
+   column BRK-B, otherwise those tickers are silently excluded from the universe
+4. dates are parsed once at construction + queries are cached (the legacy
+   get_constitunents_at_date re-ran pd.to_datetime over the whole table on
+   every rebalance day)
 """
 import pandas as pd
 import pytest
@@ -36,8 +37,8 @@ def test_exited_ticker_excluded_after_end_date(membership_table):
 
 def test_boundary_dates_inclusive(membership_table):
     src = MembershipTableSource(membership_table)
-    assert "OLD1" in src.get_constituents("2023-05-15")   # 退出日当天仍在
-    assert "NEW1" in src.get_constituents("2024-06-01")   # 加入日当天算在内
+    assert "OLD1" in src.get_constituents("2023-05-15")   # still a member on the exit day
+    assert "NEW1" in src.get_constituents("2024-06-01")   # counts from the join day
     assert "NEW1" not in src.get_constituents("2024-05-31")
 
 
@@ -56,7 +57,7 @@ def test_normalization_can_be_disabled(membership_table):
 def test_query_is_cached(membership_table):
     src = MembershipTableSource(membership_table)
     first = src.get_constituents("2024-01-02")
-    assert src.get_constituents("2024-01-02") is first  # 同日期返回缓存对象
+    assert src.get_constituents("2024-01-02") is first  # same date returns the cached object
 
 
 def test_static_universe_ignores_date():

@@ -70,8 +70,9 @@ def quantile_backtest(constituents: ConstituentsSource | pd.DataFrame | None ,fa
                     available_tickers = list(factor_df.columns)
                 else:
                     valid_tickers = constituents.get_constituents(curr_date)
-                    #按factor列序取交集: valid_tickers是set, 直接遍历顺序不确定,
-                    #并列排名经稳定排序后分位边界成员会随运行漂移, 结果不可复现
+                    #intersect in factor-column order: valid_tickers is a set with
+                    #non-deterministic iteration order, and after stable sorting of tied
+                    #ranks the bucket-boundary members would drift between runs
                     available_tickers = [t for t in factor_df.columns if t in valid_tickers]
 
                 if factor_df.iloc[index].isnull().all():
@@ -128,8 +129,10 @@ def expand_to_daily_returns(tickers_history:list, close_data: pd.DataFrame, cost
         next_date = tickers_history[i+1]['date']
         curr_date = curr['date']
 
-        #窗口含起点(调仓日): pct_change后调仓日行为NaN被丢弃, 调仓日->次日的收益保留,
-        #窗口右端含next_date(归属旧组合), 下一窗口从next_date+1天起, 不重不漏
+        #window includes its start (the rebalance day): after pct_change that row is NaN
+        #and dropped, keeping the rebalance-day -> next-day return. The right edge includes
+        #next_date (attributed to the old portfolio); the next window starts one day after,
+        #so days are covered exactly once
         window_dates = close_data.index[(close_data.index >= curr_date) & (close_data.index <= next_date)]
         for q in [f'Q{n}' for n in range(1,6)]:
             tickers_in_group = list(curr[q])
@@ -142,7 +145,7 @@ def expand_to_daily_returns(tickers_history:list, close_data: pd.DataFrame, cost
                 overlap = len(prev_set & curr_set)
                 turnover = 1 - overlap/len(curr_set)
             else:
-                turnover = 1.0 #初始建仓视为全额换手
+                turnover = 1.0 #initial position build counts as full turnover
 
             cost_today = turnover *2 *cost_per_trade
 
@@ -160,13 +163,17 @@ def expand_all_to_daily_returns(
     close_data: pd.DataFrame,
     cost_per_trade: float = 0.001,
 ) -> dict:
-    """
-    对 quantile_backtest 产出的 all_ticker_history（key是(factor, period)元组），
-    批量展开成逐日收益，不需要手动一个个取。
+    """Expand every ticker history produced by ``quantile_backtest`` at once.
+
+    Args:
+        all_ticker_history: Mapping keyed by ``(factor, period)`` as returned by
+            ``quantile_backtest``.
+        close_data: Close price dataframe covering all member tickers.
+        cost_per_trade: One-way cost per unit of turnover.
 
     Returns:
-        dict[(factor, period), pd.DataFrame] —— 和输入结构对应，
-        每个key对应一份展开后的逐日Q1-Q5+long_short收益表
+        A dict with the same ``(factor, period)`` keys, each holding a daily
+        Q1..Q5 + ``long_short`` return table.
     """
     all_daily_returns = {}
     for key, ticker_history in all_ticker_history.items():
@@ -203,9 +210,10 @@ def back_test_senity_test(constituents: ConstituentsSource | pd.DataFrame | None
     """Run sensitivity tests against factor displacement and shuffled factors.
 
     Args:
+        constituents: Point-in-time universe source (see ``quantile_backtest``).
         significant_factor_list: Factor names to evaluate.
-        factor_ticker: Original factor table indexed by date.
-        diff_holding_period: Precomputed holding-period return table.
+        factors: Mapping of factor name to a date-by-ticker value dataframe.
+        forward_returns: Mapping of holding period to a forward return dataframe.
         close: Close price table used to recompute forward returns.
         periods: List of holding periods in trading days.
         origincal_back_test: Baseline quantile backtest results used as the
@@ -222,8 +230,8 @@ def back_test_senity_test(constituents: ConstituentsSource | pd.DataFrame | None
     factors_shifting = {}
     for factor_name, factor in factors.items():
         factors_shifting[factor_name] = factor.shift(-1)
-    #shuffle基于原始因子, 且必须逐frame深拷贝:
-    #dict.copy()是浅拷贝, in-place打乱会把factors_shifting的frame一起改掉
+    #shuffle is based on the original factors, and each frame must be deep-copied:
+    #dict.copy() is shallow, so an in-place shuffle would also corrupt factors_shifting
     shuffle_data = {factor_name: factor.copy() for factor_name, factor in factors.items()}
     for factor_name, factor in shuffle_data.items():
         for idx in factor.index:
@@ -239,7 +247,7 @@ def back_test_senity_test(constituents: ConstituentsSource | pd.DataFrame | None
         
         raw_return = pd.DataFrame({ticker : close[ticker].pct_change(period).shift(-period) for ticker in tickers})
         common_col = forward_returns[period].columns.intersection(raw_return.columns)
-        diff = (forward_returns[period][common_col]-raw_return[common_col]).abs().sum().sum() #第一个sum得到series，第二个sum把所有series相加得到标量
+        diff = (forward_returns[period][common_col]-raw_return[common_col]).abs().sum().sum() #first sum gives a Series, second sum collapses it to a scalar
         period_difference[period] = diff
 
     #factor displacement
@@ -262,11 +270,11 @@ def back_test_senity_test(constituents: ConstituentsSource | pd.DataFrame | None
     
     for key, diff in displace_difference.items():
         long_short_diff = diff['Q5'] - diff['Q1']
-        print(f'{key}: displace factor increase SHAP ratio:{long_short_diff.mean()/long_short_diff.std():.4f}')
+        print(f'{key}: displaced-factor long-short Sharpe delta: {long_short_diff.mean()/long_short_diff.std():.4f}')
 
     for key, diff in shuffle_difference.items():
         long_short_diff = diff['Q5'] - diff['Q1']
-        print(f'{key}: displace factor increase SHAP ratio:{long_short_diff.mean()/long_short_diff.std():.4f}')
+        print(f'{key}: shuffled-factor long-short Sharpe delta: {long_short_diff.mean()/long_short_diff.std():.4f}')
 
     return total_difference, displace_difference, shuffle_difference
 
@@ -322,7 +330,7 @@ def monotonicity_test(result_df: pd.DataFrame, part: int = 5)->dict:
     Args:
         result_df: Dataframe containing quantile columns named ``Q1`` to
             ``Qn``.
-        n_group: Number of quantile groups to inspect. Default is 5.
+        part: Number of quantile groups to inspect. Default is 5.
 
     Returns:
         A dictionary with the mean-based Spearman correlation, its p-value,
